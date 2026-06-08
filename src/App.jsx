@@ -1,21 +1,90 @@
 import { useState, useEffect } from "react";
 
-// ── API — no auth needed for read access (README: "No API key required") ─────
+// ── API ───────────────────────────────────────────────────────────────────────
+// Swagger confirms all GET endpoints require Bearer JWT.
+// Auth POST endpoints are public (no lock icon in Swagger UI).
 
 const BASE  = "https://worldcup26.ir";
 const PROXY = "https://corsproxy.io/?url=";
+const LS_JWT  = "wc26_jwt";
+const LS_CRED = "wc26_cred";
 
-async function apiFetch(path) {
-  const url = `${BASE}${path}`;
-  // 1. Direct request — works when server has CORS headers
+// POST helper: try direct, fall back to CORS proxy
+async function postJSON(path, body) {
+  const url = BASE + path;
+  const opts = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  let r;
   try {
-    const r = await fetch(url);
-    if (r.ok) return r.json();
-  } catch (_) { /* CORS or network — fall through to proxy */ }
-  // 2. CORS proxy fallback
-  const r2 = await fetch(PROXY + encodeURIComponent(url));
-  if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
-  return r2.json();
+    r = await fetch(url, opts);
+  } catch (_) {
+    // Network/CORS blocked — try proxy (corsproxy.io supports POST)
+    r = await fetch(PROXY + encodeURIComponent(url), opts);
+  }
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = {}; }
+  if (r.ok || r.status === 400) return data; // 400 = "user already exists", still useful
+  throw new Error(data?.message || `HTTP ${r.status}`);
+}
+
+// GET helper: try direct (with token), fall back to CORS proxy
+async function getJSON(path, token) {
+  const url = BASE + path;
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  let r;
+  try {
+    r = await fetch(url, { headers });
+  } catch (_) {
+    r = await fetch(PROXY + encodeURIComponent(url), { headers });
+  }
+  if (r.status === 401) { localStorage.removeItem(LS_JWT); throw new Error("EXPIRED"); }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// Get (or create) a valid JWT — cached up to 80 days
+async function getToken() {
+  const cached = localStorage.getItem(LS_JWT);
+  if (cached) {
+    try {
+      const { exp } = JSON.parse(atob(cached.split(".")[1]));
+      if (exp * 1000 > Date.now() + 60_000) return cached;
+    } catch (_) {}
+    localStorage.removeItem(LS_JWT);
+  }
+
+  // Create or reuse credentials
+  let cred = null;
+  try { cred = JSON.parse(localStorage.getItem(LS_CRED)); } catch (_) {}
+  if (!cred) {
+    const id = Math.random().toString(36).slice(2, 10);
+    cred = { name: "WC26 Dash", email: `wc26_${id}@predict.app`, password: `P_${id}_26!` };
+    localStorage.setItem(LS_CRED, JSON.stringify(cred));
+  }
+
+  // Register (may 400 "already exists" — that's fine)
+  await postJSON("/auth/register", cred).catch(() => {});
+
+  // Authenticate
+  const data = await postJSON("/auth/authenticate", { email: cred.email, password: cred.password });
+  if (!data?.token) throw new Error("Auth failed — no token returned");
+  localStorage.setItem(LS_JWT, data.token);
+  return data.token;
+}
+
+async function loadAllData() {
+  const token = await getToken();
+  const [ta, ga, sa, grpa] = await Promise.all([
+    getJSON("/get/teams",   token),
+    getJSON("/get/games",   token),
+    getJSON("/get/stadiums",token),
+    getJSON("/get/groups",  token),
+  ]);
+  return { ta, ga, sa, grpa };
 }
 
 // ── STATIC PROFILE / xG DATA ─────────────────────────────────────────────────
@@ -683,13 +752,17 @@ export default function App() {
     (async()=>{
       try {
         setStatus("loading");
-        const [ta,ga,sa,grpa]=await Promise.all([
-          apiFetch("/get/teams"),
-          apiFetch("/get/games"),
-          apiFetch("/get/stadiums"),
-          apiFetch("/get/groups"),
-        ]);
+        let result;
+        try {
+          result = await loadAllData();
+        } catch(e) {
+          if (e.message === "EXPIRED") {
+            localStorage.removeItem(LS_JWT);
+            result = await loadAllData(); // retry with fresh token
+          } else throw e;
+        }
         if(dead)return;
+        const {ta,ga,sa,grpa}=result;
         const tMap={},sMap={};
         (ta||[]).forEach(t=>{tMap[t.id]=t;});
         (sa||[]).forEach(s=>{sMap[s.id]=s;});
@@ -732,7 +805,7 @@ export default function App() {
           <span style={{width:6,height:6,borderRadius:"50%",background:dot,display:"inline-block"}}/>
           <span style={{fontSize:10,color:dot,fontWeight:600}}>{label}</span>
           {status==="error"&&(
-            <button onClick={()=>window.location.reload()}
+            <button onClick={()=>{localStorage.removeItem(LS_JWT);window.location.reload();}}
               style={{marginLeft:4,background:"none",border:"1px solid #334155",borderRadius:4,padding:"2px 7px",fontSize:9,color:"#94a3b8",cursor:"pointer"}}>
               Retry
             </button>
