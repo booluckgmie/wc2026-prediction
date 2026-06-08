@@ -2,47 +2,84 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
-const BASE = "https://worldcup26.ir";
+const BASE   = "https://worldcup26.ir";
+const PROXY  = "https://corsproxy.io/?url=";
 const LS_TOKEN = "wc26_token";
-const LS_USER  = "wc26_user";
+const LS_CREDS = "wc26_creds";
+
+// Try direct first, fall back to CORS proxy
+async function smartFetch(url, opts={}) {
+  try {
+    const r = await fetch(url, opts);
+    if (r.ok || r.status === 400) return r; // 400 on register = already exists, fine
+    throw new Error(`HTTP ${r.status}`);
+  } catch {
+    // retry through CORS proxy (GET only — proxy can't forward auth POST bodies reliably)
+    if (!opts.method || opts.method === "GET") {
+      const proxyUrl = PROXY + encodeURIComponent(url);
+      const r2 = await fetch(proxyUrl, opts);
+      return r2;
+    }
+    throw new Error("Network unreachable");
+  }
+}
 
 async function apiToken() {
   const stored = localStorage.getItem(LS_TOKEN);
   if (stored) return stored;
 
-  // generate a deterministic-ish anonymous account
   const uid = Math.random().toString(36).slice(2,10);
-  const email = `anon_${uid}@wc26dash.local`;
-  const password = `Pw_${uid}_2026!`;
+  const email = `anon_${uid}@wc26dash.dev`;
+  const password = `Wc_${uid}_2026!`;
+  localStorage.setItem(LS_CREDS, JSON.stringify({email,password}));
 
-  // try register (may 400 if exists — that's fine)
+  // Register (ignore errors — account may already exist)
   await fetch(`${BASE}/auth/register`, {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name:"WC26 User", email, password})
   }).catch(()=>{});
 
-  const res = await fetch(`${BASE}/auth/authenticate`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({email, password})
-  });
-  if (!res.ok) throw new Error("Auth failed");
-  const data = await res.json();
+  // Authenticate — try direct, then proxy
+  let data;
+  try {
+    const r = await fetch(`${BASE}/auth/authenticate`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({email, password})
+    });
+    if (!r.ok) throw new Error("direct auth failed");
+    data = await r.json();
+  } catch {
+    // proxy POST via encoded query param trick (allorigins)
+    const r2 = await fetch(
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(BASE+"/auth/authenticate")}`,
+      { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({email,password}) }
+    );
+    if (!r2.ok) throw new Error("Auth failed — API unreachable");
+    data = await r2.json();
+  }
+
   const token = data.token;
+  if (!token) throw new Error("No token in auth response");
   localStorage.setItem(LS_TOKEN, token);
-  localStorage.setItem(LS_USER, email);
   return token;
 }
 
 async function apiFetch(path, token) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers:{"Authorization":`Bearer ${token}`}
-  });
-  if (res.status === 401) {
-    localStorage.removeItem(LS_TOKEN);
-    throw new Error("Token expired");
+  const url = `${BASE}${path}`;
+  const headers = { "Authorization":`Bearer ${token}` };
+  let r;
+  try {
+    r = await fetch(url, { headers });
+    if (r.status === 401) { localStorage.removeItem(LS_TOKEN); throw new Error("Token expired"); }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch(e) {
+    if (e.message === "Token expired") throw e;
+    // CORS fallback
+    r = await fetch(PROXY + encodeURIComponent(url), { headers });
+    if (r.status === 401) { localStorage.removeItem(LS_TOKEN); throw new Error("Token expired"); }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return r.json();
 }
 
 // ── STATIC CHESS / xG DATA ────────────────────────────────────────────────────
@@ -285,7 +322,7 @@ function TeamCard({name, flagUrl, isMobile}) {
         {flagUrl && <FlagImg url={flagUrl} name={name} size={24}/>}
         <span style={{fontSize:14,fontWeight:600}}>{name}</span>
       </div>
-      <div style={{fontSize:11,...S.muted,marginTop:6}}>No chess profile available</div>
+      <div style={{fontSize:11,...S.muted,marginTop:6}}>No profile data available</div>
     </div>
   );
   return (
@@ -742,7 +779,7 @@ function LegendTab({isMobile}) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div style={{...S.card,padding:isMobile?12:16}}>
-        <div style={{fontWeight:700,marginBottom:10,fontSize:14,color:"#93c5fd"}}>Chess × Football Taxonomy</div>
+        <div style={{fontWeight:700,marginBottom:10,fontSize:14,color:"#93c5fd"}}>Position × Football Roles</div>
         <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(3,1fr)",gap:8}}>
           {Object.entries(PI).map(([k,icon])=>(
             <div key={k} style={{...S.sub,padding:10}}>
@@ -767,7 +804,7 @@ function LegendTab({isMobile}) {
             ["🌡","Weather","Hot (34°C+) ×0.93 · Cool/Rain ×0.97 · Normal ×1.0"],
             ["🏟","Stadium Crowd",">80k grants home team ×1.03 xG boost"],
             ["⚖️","Referee Bias","±4% xG if referee shares confederation with a team"],
-            ["♟","Piece Ratings","Weighted avg across 6 chess roles scales base xG"],
+            ["♟","Piece Ratings","Weighted avg across 6 position roles scales base xG"],
             ["📐","Poisson Model","P(k) = e^−λ × λ^k / k! — 6×6 score probability matrix"],
             ["🌐","Live Data","Teams, fixtures, stadiums & standings via worldcup26.ir API"],
           ].map(([icon,title,desc])=>(
@@ -793,7 +830,7 @@ const TABS = [
   {id:"groups",   label:"Groups",   icon:"🏆"},
   {id:"teams",    label:"Teams",    icon:"♟"},
   {id:"stadiums", label:"Venues",   icon:"🏟"},
-  {id:"legend",   label:"Theory",   icon:"📐"},
+  {id:"legend",   label:"Guide",    icon:"📐"},
 ];
 
 export default function App() {
@@ -870,8 +907,8 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
           <span style={{fontSize:isMobile?20:22,flexShrink:0}}>♚</span>
           <div style={{minWidth:0}}>
-            <div style={{fontSize:isMobile?14:17,fontWeight:800,letterSpacing:-0.5,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>WC 2026 Chess Analytics</div>
-            <div style={{fontSize:9,...S.muted,whiteSpace:"nowrap"}}>FIFA World Cup · Poisson × Chess Taxonomy</div>
+            <div style={{fontSize:isMobile?14:17,fontWeight:800,letterSpacing:-0.5,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>WC 2026 Analytics</div>
+            <div style={{fontSize:9,...S.muted,whiteSpace:"nowrap"}}>FIFA World Cup · Poisson Prediction Engine</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
