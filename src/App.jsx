@@ -457,8 +457,8 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
                       </div>
                     ):(
                       <>
-                        <div style={{fontSize:mob?13:15,fontWeight:700,color:"#334155"}}>{res?.score||"–"}</div>
-                        <div style={{fontSize:8,color:C.blue}}>pred</div>
+                        <div style={{fontSize:mob?18:22,fontWeight:900,color:"#fff",letterSpacing:1}}>{res?.score||"–"}</div>
+                        <div style={{fontSize:8,color:C.blue,fontWeight:600}}>Predicted</div>
                       </>
                     )}
                   </div>
