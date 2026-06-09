@@ -746,19 +746,22 @@ function GuideTab({mob}) {
         <div style={{fontWeight:800,fontSize:14,color:"#93c5fd",marginBottom:12,letterSpacing:.3}}>How Predictions Work</div>
         <div style={{display:"flex",flexDirection:"column",gap:0}}>
           {[
-            ["🏟","Crowd Boost",">80k capacity adds ×1.03 to home team xG. Bigger crowds lift the home side."],
-            ["⚖️","Referee Bias","±4% xG modifier when the referee's confederation matches a team's own. Subtle home-confederation edge."],
-            ["♟","Position Ratings","Weighted average of all 6 role ratings scales the base xG up or down by ±10%."],
-            ["📐","Poisson Model","Goals per game follow a Poisson distribution: P(k) = e⁻λ × λᵏ / k!  where λ = expected goals (xG). Each cell in the 6×6 grid is P(home=row) × P(away=col)."],
-            ["🎯","Scenarios","Base uses raw xG. Optimistic multiplies xG ×1.7 (open play). Pessimistic multiplies ×0.48 (defensive battle)."],
-            ["📂","Data Source","Match, team, stadium & group data from github.com/rezarahiminia/worldcup2026"],
-          ].map(([ic,t,d],idx,arr)=>(
-            <div key={t} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 0",borderBottom:idx<arr.length-1?"1px solid #0f172a":"none"}}>
-              <span style={{fontSize:20,flexShrink:0,width:28,textAlign:"center"}}>{ic}</span>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#f8fafc",marginBottom:3}}>{t}</div>
-                <div style={{fontSize:10,color:C.muted,lineHeight:1.6}}>{d}</div>
-              </div>
+            ["🏟","Crowd Boost",    ">80k capacity adds ×1.03 to home xG. Bigger crowds lift the home side."],
+            ["⚖️","Referee Bias",   "±4% xG modifier when referee's confederation matches a team's own."],
+            ["♟", "Position Ratings","6 role ratings (weighted avg) scale base xG up or down by ±10%."],
+            ["📐","Poisson Model",  "P(k goals) = e⁻λ × λᵏ / k!  where λ = xG. Each grid cell = P(home=row) × P(away=col)."],
+            ["🎯","Scenarios",      "Base = raw xG.  🔥 Optimistic = ×1.7.  🧱 Pessimistic = ×0.48."],
+            ["📂","Data Source",    "github.com/rezarahiminia/worldcup2026"],
+          ].map(([ic,title,desc],idx,arr)=>(
+            <div key={title} style={{display:"grid",gridTemplateColumns:"28px 1fr",columnGap:10,rowGap:2,padding:"9px 0",borderBottom:idx<arr.length-1?"1px solid #0f172a":"none",alignItems:"start"}}>
+              {/* icon — top-left, vertically centred with title */}
+              <span style={{fontSize:17,lineHeight:"20px",textAlign:"center"}}>{ic}</span>
+              {/* title */}
+              <span style={{fontSize:11,fontWeight:700,color:"#f8fafc",lineHeight:"20px"}}>{title}</span>
+              {/* empty cell to keep grid aligned */}
+              <span/>
+              {/* description indented under title */}
+              <span style={{fontSize:10,color:C.muted,lineHeight:1.6}}>{desc}</span>
             </div>
           ))}
         </div>
@@ -797,44 +800,87 @@ function GuideTab({mob}) {
 
         {/* Score grid example */}
         <div>
-          <div style={{fontSize:10,color:C.dim,fontWeight:600,marginBottom:6}}>② 6×6 POISSON SCORE GRID</div>
-          <div style={{overflowX:"auto",marginBottom:8}}>
-            <div style={{fontSize:10,color:C.muted,marginBottom:6}}>
-              xG → <span style={{color:C.green,fontWeight:700}}>Brazil {GUIDE_EXAMPLE.hXg.toFixed(2)}</span>
-              {" · "}
-              <span style={{color:C.red,fontWeight:700}}>France {GUIDE_EXAMPLE.aXg.toFixed(2)}</span>
-            </div>
-            <table style={{borderCollapse:"collapse",fontSize:9}}>
+          <div style={{fontSize:10,color:C.dim,fontWeight:600,marginBottom:8}}>② 6×6 POISSON SCORE GRID</div>
+
+          {/* xG legend */}
+          <div style={{display:"flex",gap:16,marginBottom:8,fontSize:10}}>
+            <span><span style={{color:C.muted}}>xG </span><span style={{color:C.green,fontWeight:700}}>BRA {GUIDE_EXAMPLE.hXg.toFixed(2)}</span></span>
+            <span><span style={{color:C.muted}}>xG </span><span style={{color:C.red,fontWeight:700}}>FRA {GUIDE_EXAMPLE.aXg.toFixed(2)}</span></span>
+          </div>
+
+          {/* Axis labels */}
+          <div style={{display:"flex",gap:6,marginBottom:4,alignItems:"center"}}>
+            <span style={{fontSize:9,color:C.muted,width:36,flexShrink:0,textAlign:"right"}}>BRA →</span>
+            <span style={{fontSize:9,color:C.muted}}>goals scored (rows) &nbsp;|&nbsp; FRA goals scored (cols) ↓</span>
+          </div>
+
+          {/* Grid */}
+          <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+            <table style={{borderCollapse:"separate",borderSpacing:2,tableLayout:"fixed",minWidth:0}}>
               <thead>
                 <tr>
-                  <td style={{padding:"3px 6px",color:C.muted,fontWeight:600}}>H╲A</td>
-                  {[0,1,2,3,4,5].map(j=><td key={j} style={{padding:"3px 7px",textAlign:"center",color:C.dim,fontWeight:600}}>A={j}</td>)}
+                  <td style={{width:36,fontSize:9,color:C.muted,fontWeight:700,textAlign:"center",padding:"2px 0",whiteSpace:"nowrap"}}>BRA╲FRA</td>
+                  {[0,1,2,3,4,5].map(j=>(
+                    <td key={j} style={{width:42,fontSize:9,fontWeight:700,textAlign:"center",color:C.dim,padding:"2px 0"}}>{j}</td>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {GUIDE_EXAMPLE.mat.map((row,i)=>(
-                  <tr key={i}>
-                    <td style={{padding:"3px 6px",color:C.dim,fontWeight:600}}>H={i}</td>
-                    {row.map((v,j)=>{
-                      const a=v/Math.max(...GUIDE_EXAMPLE.mat.flat());
-                      const bg=i>j?`rgba(34,197,94,${a*.6})`:i===j?`rgba(245,158,11,${a*.6})`:`rgba(239,68,68,${a*.6})`;
-                      const highlight=(i===2&&j===1); // highlight 2-1 as most likely
-                      return (
-                        <td key={j} style={{padding:"3px 7px",textAlign:"center",background:bg,borderRadius:3,minWidth:30,
-                          outline:highlight?"2px solid #fff":"none",outlineOffset:-1,fontWeight:highlight?800:400,color:"#fff",fontSize:highlight?10:9}}>
-                          {v.toFixed(1)}%
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                {GUIDE_EXAMPLE.mat.map((row,i)=>{
+                  const maxV=Math.max(...GUIDE_EXAMPLE.mat.flat());
+                  return (
+                    <tr key={i}>
+                      <td style={{fontSize:9,fontWeight:700,textAlign:"center",color:C.dim,padding:"2px 0"}}>{i}</td>
+                      {row.map((v,j)=>{
+                        const alpha=v/maxV;
+                        const bg=i>j?`rgba(34,197,94,${alpha*.65})`:i===j?`rgba(245,158,11,${alpha*.65})`:`rgba(239,68,68,${alpha*.65})`;
+                        const top=(i===2&&j===1);
+                        return (
+                          <td key={j} style={{
+                            fontSize:top?10:9,fontWeight:top?900:400,textAlign:"center",
+                            background:bg,borderRadius:4,padding:"4px 2px",color:"#fff",
+                            border:top?"2px solid #fff":"2px solid transparent",
+                            width:42,
+                          }}>
+                            {v.toFixed(1)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          <div style={{fontSize:10,color:C.muted,lineHeight:1.7,background:C.deep,borderRadius:6,padding:"8px 10px"}}>
-            <div style={{marginBottom:4}}><span style={{color:"#f8fafc",fontWeight:700}}>Rows = home goals, Columns = away goals.</span> Each cell shows the % probability of that exact scoreline.</div>
-            <div style={{marginBottom:4}}><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(34,197,94,.5)",marginRight:4,verticalAlign:"middle"}}/>Green cells = home win &nbsp;·&nbsp; <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(245,158,11,.5)",marginRight:4,verticalAlign:"middle"}}/>Amber = draw &nbsp;·&nbsp; <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(239,68,68,.5)",marginRight:4,verticalAlign:"middle"}}/>Red = away win</div>
-            <div>The <span style={{color:"#fff",fontWeight:700,outline:"1px solid #fff",padding:"0 3px",borderRadius:2}}>outlined cell</span> (H=2, A=1) is the single most likely scoreline at {GUIDE_EXAMPLE.mat[2][1].toFixed(1)}%.</div>
+
+          {/* Legend */}
+          <div style={{marginTop:10,background:C.deep,borderRadius:8,padding:"10px 12px",fontSize:10,lineHeight:1.7,color:C.muted}}>
+            <div style={{fontWeight:700,color:"#f8fafc",marginBottom:6}}>How to read this grid</div>
+            <div style={{display:"grid",gridTemplateColumns:"auto 1fr",columnGap:8,rowGap:4}}>
+              <span style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{width:12,height:12,borderRadius:2,background:"rgba(34,197,94,.6)",flexShrink:0,display:"inline-block"}}/>
+                <span style={{color:"#f8fafc",fontWeight:600}}>Green</span>
+              </span>
+              <span>Row &gt; Col → Brazil win</span>
+              <span style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{width:12,height:12,borderRadius:2,background:"rgba(245,158,11,.6)",flexShrink:0,display:"inline-block"}}/>
+                <span style={{color:"#f8fafc",fontWeight:600}}>Amber</span>
+              </span>
+              <span>Row = Col → Draw</span>
+              <span style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{width:12,height:12,borderRadius:2,background:"rgba(239,68,68,.6)",flexShrink:0,display:"inline-block"}}/>
+                <span style={{color:"#f8fafc",fontWeight:600}}>Red</span>
+              </span>
+              <span>Row &lt; Col → France win</span>
+              <span style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{width:12,height:12,borderRadius:2,border:"2px solid #fff",flexShrink:0,display:"inline-block"}}/>
+                <span style={{color:"#f8fafc",fontWeight:600}}>Border</span>
+              </span>
+              <span>Most likely scoreline — Brazil 2–1 France ({GUIDE_EXAMPLE.mat[2][1].toFixed(1)}%)</span>
+            </div>
+            <div style={{marginTop:8,borderTop:"1px solid #1e293b",paddingTop:8}}>
+              Each cell = P(BRA scores row) × P(FRA scores col). Brighter = higher probability.
+            </div>
           </div>
         </div>
       </section>
