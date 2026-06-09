@@ -90,6 +90,15 @@ const REF_BIAS = {
   AFC:     {AFC:0.04,UEFA:-0.01,CAF:0.00,CONMEBOL:0.00,CONCACAF:0.00,OFC:0.00},
 };
 
+// ── SCENARIO MODIFIERS ────────────────────────────────────────────────────────
+// hOffM = home attack multiplier, aDefM = away defense vulnerability,
+// aOffM = away attack multiplier, hDefM = home defense vulnerability
+const SCENARIOS = {
+  base:  {label:"Base",        icon:"⚖",  desc:"Expected outcomes",          col:"#3b82f6", hOffM:1.00, aDefM:1.00, aOffM:1.00, hDefM:1.00},
+  best:  {label:"Optimistic",  icon:"🔥", desc:"Open, high-scoring match",   col:"#22c55e", hOffM:1.28, aDefM:1.18, aOffM:1.28, hDefM:1.18},
+  worst: {label:"Pessimistic", icon:"🧱", desc:"Defensive, low-scoring game", col:"#ef4444", hOffM:0.78, aDefM:0.82, aOffM:0.78, hDefM:0.82},
+};
+
 // Position role labels / colours
 const ROLES = [
   {key:"k", icon:"♔", label:"GK/CB",       color:"#ef4444"},
@@ -104,21 +113,22 @@ const ROLES = [
 
 function poisson(λ, k) { let p=Math.exp(-λ); for(let i=1;i<=k;i++) p*=λ/i; return p; }
 
-function calcMatch(hn, an, refC="UEFA", cap=70000) {
+function calcMatch(hn, an, refC="UEFA", cap=70000, scenario="base") {
   const h=PROFILE[hn], a=PROFILE[an];
   if (!h||!a) return null;
+  const sc = SCENARIOS[scenario] || SCENARIOS.base;
   const capB = cap>80000?1.03:1.0;
   const rb   = REF_BIAS[refC]||{};
   const pw   = x=>(x.k*.20+x.q*.20+x.ro*.15+x.b*.15+x.kn*.15+x.p*.15)/100;
-  let hXg = h.xgOff*(1-a.xgDef/3)*capB*(1+(rb[CONF[hn]]||0))*(0.85+pw(h.r)*.3);
-  let aXg = a.xgOff*(1-h.xgDef/3)    *(1+(rb[CONF[an]]||0))*(0.85+pw(a.r)*.3);
+  let hXg = h.xgOff * sc.hOffM * (1 - a.xgDef * sc.aDefM/3) * capB * (1+(rb[CONF[hn]]||0)) * (0.85+pw(h.r)*.3);
+  let aXg = a.xgOff * sc.aOffM * (1 - h.xgDef * sc.hDefM/3)         * (1+(rb[CONF[an]]||0)) * (0.85+pw(a.r)*.3);
   hXg=Math.max(0.1,hXg); aXg=Math.max(0.1,aXg);
   const mat=[]; let W=0,D=0,L=0;
   for(let i=0;i<=5;i++){mat[i]=[];for(let j=0;j<=5;j++){
     const p=poisson(hXg,i)*poisson(aXg,j)*100;
     mat[i][j]=p; if(i>j)W+=p; else if(i===j)D+=p; else L+=p;
   }}
-  return {W,D,L,hXg,aXg,score:`${Math.round(hXg)}–${Math.round(aXg)}`,mat};
+  return {W,D,L,hXg,aXg,score:`${Math.round(hXg)}–${Math.round(aXg)}`,mat,scenario};
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -264,14 +274,15 @@ function ProfileCard({name,flag,compact=false}) {
 
 // ── MATCH DETAIL OVERLAY ─────────────────────────────────────────────────────
 
-function MatchDetail({game,tMap,sMap,onClose,mob}) {
+function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
   const home=tMap[game.home_team_id], away=tMap[game.away_team_id];
   const stadium=sMap[game.stadium_id];
   const hn=home?.name_en||game.home_team_label||"TBD";
   const an=away?.name_en||game.away_team_label||"TBD";
   const done=game.finished==="TRUE";
   const live=game.time_elapsed&&game.time_elapsed!=="notstarted"&&!done;
-  const res=!done?calcMatch(hn,an,"UEFA",stadium?.capacity):null;
+  const res=!done?calcMatch(hn,an,"UEFA",stadium?.capacity,scenario):null;
+  const sc=SCENARIOS[scenario];
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(2,6,23,0.94)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:mob?"8px":"24px",overflowY:"auto",WebkitOverflowScrolling:"touch"}}
@@ -332,7 +343,11 @@ function MatchDetail({game,tMap,sMap,onClose,mob}) {
         {/* Prediction */}
         {res&&!done&&(
           <div style={{background:C.card,borderRadius:8,padding:10,marginBottom:12}}>
-            <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:6}}>PREDICTION</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+              <span style={{fontSize:10,color:C.muted,fontWeight:600}}>PREDICTION</span>
+              <span style={{fontSize:9,background:sc.col+"22",color:sc.col,borderRadius:10,padding:"1px 8px",fontWeight:700}}>{sc.icon} {sc.label}</span>
+              <span style={{fontSize:9,color:C.muted}}>{sc.desc}</span>
+            </div>
             <WinBar W={res.W} D={res.D} L={res.L}/>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted,marginTop:3}}>
               <span>Home {res.W.toFixed(0)}%</span><span>Draw {res.D.toFixed(0)}%</span><span>Away {res.L.toFixed(0)}%</span>
@@ -364,7 +379,7 @@ function MatchDetail({game,tMap,sMap,onClose,mob}) {
 
 // ── FIXTURES TAB ─────────────────────────────────────────────────────────────
 
-function FixturesTab({matches,tMap,sMap,mob}) {
+function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
   const [sel,setSel]=useState(null);
   const [stage,setStage]=useState("group");
   const [grp,setGrp]=useState("ALL");
@@ -379,7 +394,7 @@ function FixturesTab({matches,tMap,sMap,mob}) {
 
   return (
     <div>
-      {sel&&<MatchDetail game={sel} tMap={tMap} sMap={sMap} onClose={()=>setSel(null)} mob={mob}/>}
+      {sel&&<MatchDetail game={sel} tMap={tMap} sMap={sMap} onClose={()=>setSel(null)} mob={mob} scenario={scenario}/>}
 
       {/* Stage pills */}
       <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
@@ -415,7 +430,7 @@ function FixturesTab({matches,tMap,sMap,mob}) {
             const an=away?.name_en||g.away_team_label||"TBD";
             const done=g.finished==="TRUE";
             const live=g.time_elapsed&&g.time_elapsed!=="notstarted"&&!done;
-            const res=!done&&!live?calcMatch(hn,an,"UEFA",sMap[g.stadium_id]?.capacity):null;
+            const res=!done&&!live?calcMatch(hn,an,"UEFA",sMap[g.stadium_id]?.capacity,scenario):null;
 
             return (
               <div key={g.id} onClick={()=>setSel(g)}
@@ -594,7 +609,7 @@ function StadiumsTab({sMap,matches,mob}) {
 
 // ── SIMULATE TAB ─────────────────────────────────────────────────────────────
 
-function SimulateTab({tMap,sMap,mob}) {
+function SimulateTab({tMap,sMap,mob,scenario="base"}) {
   const profiledTeams=useMemo(()=>Object.keys(PROFILE).sort(),[]);
   const [hn,setHn]=useState("Brazil");
   const [an,setAn]=useState("France");
@@ -602,7 +617,8 @@ function SimulateTab({tMap,sMap,mob}) {
   const [stadId,setStadId]=useState("");
 
   const cap=stadId&&sMap[stadId]?sMap[stadId].capacity:70000;
-  const res=calcMatch(hn,an,refC,cap);
+  const res=calcMatch(hn,an,refC,cap,scenario);
+  const sc=SCENARIOS[scenario];
   const hd=Object.values(tMap).find(t=>t.name_en===hn);
   const ad=Object.values(tMap).find(t=>t.name_en===an);
   const stadList=useMemo(()=>Object.values(sMap).sort((a,b)=>b.capacity-a.capacity),[sMap]);
@@ -644,6 +660,9 @@ function SimulateTab({tMap,sMap,mob}) {
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {/* Score card */}
           <div style={{background:C.deep,borderRadius:8,padding:14}}>
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:8}}>
+              <span style={{fontSize:10,background:sc.col+"22",color:sc.col,borderRadius:10,padding:"2px 10px",fontWeight:700}}>{sc.icon} {sc.label} — {sc.desc}</span>
+            </div>
             <div style={{display:"flex",justifyContent:"space-around",alignItems:"center",gap:8,marginBottom:10}}>
               <div style={{textAlign:"center",minWidth:0}}>
                 <FlagImg url={hd?.flag} name={hn} size={34}/>
@@ -732,6 +751,7 @@ export default function App() {
   const [tab,setTab]=useState("fixtures");
   const [mob,setMob]=useState(window.innerWidth<768);
 
+  const [scenario,setScenario]=useState("base");
   const [tMap,setTMap]=useState({});
   const [matches,setMatches]=useState([]);
   const [sMap,setSMap]=useState({});
@@ -822,6 +842,21 @@ export default function App() {
         ))}
       </nav>
 
+      {/* Scenario toggle bar */}
+      <div style={{background:"#020617",borderBottom:"1px solid #1e293b",padding:"6px 12px",display:"flex",alignItems:"center",gap:6,flexShrink:0,flexWrap:"wrap"}}>
+        <span style={{fontSize:9,color:C.muted,fontWeight:600,marginRight:2}}>SCENARIO</span>
+        {Object.entries(SCENARIOS).map(([k,s])=>(
+          <button key={k} onClick={()=>setScenario(k)}
+            style={{padding:"3px 12px",borderRadius:20,border:`1px solid ${scenario===k?s.col:"#334155"}`,cursor:"pointer",fontSize:10,fontWeight:700,
+              background:scenario===k?s.col+"22":"transparent",
+              color:scenario===k?s.col:C.muted,
+              transition:"all .15s"}}>
+            {s.icon} {s.label}
+          </button>
+        ))}
+        <span style={{fontSize:9,color:C.muted,marginLeft:4}}>{SCENARIOS[scenario].desc}</span>
+      </div>
+
       {/* Loading screen */}
       {loading&&(
         <div style={{flex:1,overflowY:"auto",padding:mob?"10px":"16px 20px"}}>
@@ -834,10 +869,10 @@ export default function App() {
       {/* Content */}
       {!loading&&(
         <main style={{flex:1,overflowY:"auto",padding:mob?"10px":"14px 20px",paddingBottom:`calc(16px + env(safe-area-inset-bottom,0px))`}}>
-          {tab==="fixtures"&&<FixturesTab matches={matches} tMap={tMap} sMap={sMap} mob={mob}/>}
+          {tab==="fixtures"&&<FixturesTab matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
           {tab==="groups"  &&<GroupsTab   tables={tables} tMap={tMap} mob={mob}/>}
           {tab==="teams"   &&<TeamsTab    tMap={tMap} mob={mob}/>}
-          {tab==="simulate"&&<SimulateTab tMap={tMap} sMap={sMap} mob={mob}/>}
+          {tab==="simulate"&&<SimulateTab tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
           {tab==="stadiums"&&<StadiumsTab sMap={sMap} matches={matches} mob={mob}/>}
           {tab==="guide"   &&<GuideTab    mob={mob}/>}
         </main>
