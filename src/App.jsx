@@ -696,42 +696,149 @@ function SimulateTab({tMap,sMap,mob,scenario="base"}) {
 
 // ── GUIDE TAB ─────────────────────────────────────────────────────────────────
 
+// Example Poisson matrix for Guide (Brazil vs France, base scenario)
+const GUIDE_EXAMPLE = (()=>{
+  const hXg=1.76, aXg=1.05;
+  const mat=[]; let W=0,D=0,L=0;
+  for(let i=0;i<=5;i++){mat[i]=[];for(let j=0;j<=5;j++){
+    const p=poisson(hXg,i)*poisson(aXg,j)*100;
+    mat[i][j]=p; if(i>j)W+=p; else if(i===j)D+=p; else L+=p;
+  }}
+  return {mat,W,D,L,hXg,aXg};
+})();
+
 function GuideTab({mob}) {
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <div style={{background:C.card,borderRadius:8,padding:mob?12:16}}>
-        <div style={{fontWeight:700,fontSize:14,color:"#93c5fd",marginBottom:10}}>Position Ratings</div>
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+      {/* ── Position Ratings ── */}
+      <section style={{background:C.card,borderRadius:10,padding:mob?14:18}}>
+        <div style={{fontWeight:800,fontSize:14,color:"#93c5fd",marginBottom:12,letterSpacing:.3}}>Position Ratings</div>
         <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(3,1fr)",gap:8}}>
           {ROLES.map(({key,icon,label,color})=>(
-            <div key={key} style={{background:C.deep,borderRadius:6,padding:10}}>
-              <div style={{fontSize:20,marginBottom:4}}>{icon}</div>
-              <div style={{fontSize:12,fontWeight:700,color}}>{label}</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>
-                {key==="k"?"Last line — distribution & positioning"
-                :key==="q"?"Goal threat — creativity & finishing"
-                :key==="ro"?"Width, crosses, overlapping runs"
-                :key==="b"?"Diagonals, vision, through-balls"
-                :key==="kn"?"Duels, link play, transitions"
-                :"Pressing triggers, set-pieces"}
+            <div key={key} style={{background:C.deep,borderRadius:8,padding:"10px 12px",display:"flex",gap:10,alignItems:"flex-start"}}>
+              <span style={{fontSize:22,lineHeight:1,flexShrink:0}}>{icon}</span>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color,marginBottom:2}}>{label}</div>
+                <div style={{fontSize:10,color:C.muted,lineHeight:1.5}}>
+                  {key==="k"?"Last line — distribution & aerial dominance"
+                  :key==="q"?"Goal threat — movement, creativity & finishing"
+                  :key==="ro"?"Width, overlapping runs & delivery"
+                  :key==="b"?"Diagonals, vision & through-balls"
+                  :key==="kn"?"Duels, link play & transitions"
+                  :"Pressing triggers, work-rate & set-pieces"}
+                </div>
               </div>
             </div>
           ))}
         </div>
-      </div>
-      <div style={{background:C.card,borderRadius:8,padding:mob?12:16}}>
-        <div style={{fontWeight:700,fontSize:14,color:"#93c5fd",marginBottom:10}}>How Predictions Work</div>
-        {[["🏟","Crowd Boost",">80k capacity gives home team ×1.03 xG"],
-          ["⚖️","Referee Bias","±4% xG when referee's confederation matches a team's"],
-          ["♟","Position Ratings","Weighted average of 6 role ratings scales base xG"],
-          ["📐","Poisson Model","P(k goals) = e^−λ × λ^k / k! — shown as 6×6 score grid"],
-          ["📂","Data Source","All team, match, stadium & group data from github.com/rezarahiminia/worldcup2026"],
-        ].map(([ic,t,d])=>(
-          <div key={t} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
-            <span style={{fontSize:18,flexShrink:0}}>{ic}</span>
-            <div><div style={{fontSize:12,fontWeight:600,color:C.text}}>{t}</div><div style={{fontSize:10,color:C.muted,marginTop:1}}>{d}</div></div>
+        <div style={{marginTop:12,background:C.deep,borderRadius:8,padding:"10px 14px"}}>
+          <div style={{fontSize:10,color:C.muted,marginBottom:4,fontWeight:600}}>HOW RATINGS AFFECT xG</div>
+          <div style={{fontSize:10,color:C.dim,lineHeight:1.7}}>
+            Each role is weighted and averaged into a <span style={{color:"#f8fafc"}}>power score</span>: GK/CB &amp; Striker carry <span style={{color:"#f8fafc"}}>20%</span> each, Wingbacks, Creative MF, Box-to-Box &amp; Press carry <span style={{color:"#f8fafc"}}>15%</span> each.
+            A team rated <span style={{color:C.green}}>90 overall</span> boosts xG by <span style={{color:C.green}}>~+10%</span> over a team rated <span style={{color:C.red}}>70 overall</span>.
           </div>
-        ))}
-      </div>
+        </div>
+      </section>
+
+      {/* ── How Predictions Work ── */}
+      <section style={{background:C.card,borderRadius:10,padding:mob?14:18}}>
+        <div style={{fontWeight:800,fontSize:14,color:"#93c5fd",marginBottom:12,letterSpacing:.3}}>How Predictions Work</div>
+        <div style={{display:"flex",flexDirection:"column",gap:0}}>
+          {[
+            ["🏟","Crowd Boost",">80k capacity adds ×1.03 to home team xG. Bigger crowds lift the home side."],
+            ["⚖️","Referee Bias","±4% xG modifier when the referee's confederation matches a team's own. Subtle home-confederation edge."],
+            ["♟","Position Ratings","Weighted average of all 6 role ratings scales the base xG up or down by ±10%."],
+            ["📐","Poisson Model","Goals per game follow a Poisson distribution: P(k) = e⁻λ × λᵏ / k!  where λ = expected goals (xG). Each cell in the 6×6 grid is P(home=row) × P(away=col)."],
+            ["🎯","Scenarios","Base uses raw xG. Optimistic multiplies xG ×1.7 (open play). Pessimistic multiplies ×0.48 (defensive battle)."],
+            ["📂","Data Source","Match, team, stadium & group data from github.com/rezarahiminia/worldcup2026"],
+          ].map(([ic,t,d],idx,arr)=>(
+            <div key={t} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 0",borderBottom:idx<arr.length-1?"1px solid #0f172a":"none"}}>
+              <span style={{fontSize:20,flexShrink:0,width:28,textAlign:"center"}}>{ic}</span>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#f8fafc",marginBottom:3}}>{t}</div>
+                <div style={{fontSize:10,color:C.muted,lineHeight:1.6}}>{d}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Reading the Prediction Example ── */}
+      <section style={{background:C.card,borderRadius:10,padding:mob?14:18}}>
+        <div style={{fontWeight:800,fontSize:14,color:"#93c5fd",marginBottom:4,letterSpacing:.3}}>Example: Reading a Prediction</div>
+        <div style={{fontSize:10,color:C.muted,marginBottom:14}}>Brazil vs France · Base scenario · 70k stadium</div>
+
+        {/* Win bar example */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:10,color:C.dim,fontWeight:600,marginBottom:6}}>① WIN PROBABILITY BAR</div>
+          <WinBar W={GUIDE_EXAMPLE.W} D={GUIDE_EXAMPLE.D} L={GUIDE_EXAMPLE.L}/>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginTop:5,gap:4}}>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:10,height:10,borderRadius:2,background:C.green,display:"inline-block",flexShrink:0}}/>
+              <span style={{color:C.text,fontWeight:600}}>Brazil win</span>
+              <span style={{color:C.muted}}>{GUIDE_EXAMPLE.W.toFixed(0)}%</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:10,height:10,borderRadius:2,background:C.amber,display:"inline-block",flexShrink:0}}/>
+              <span style={{color:C.text,fontWeight:600}}>Draw</span>
+              <span style={{color:C.muted}}>{GUIDE_EXAMPLE.D.toFixed(0)}%</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:10,height:10,borderRadius:2,background:C.red,display:"inline-block",flexShrink:0}}/>
+              <span style={{color:C.text,fontWeight:600}}>France win</span>
+              <span style={{color:C.muted}}>{GUIDE_EXAMPLE.L.toFixed(0)}%</span>
+            </div>
+          </div>
+          <div style={{fontSize:10,color:C.muted,marginTop:8,lineHeight:1.6,background:C.deep,borderRadius:6,padding:"8px 10px"}}>
+            The bar width = probability. Green = home win, amber = draw, red = away win. Percentages sum to ~100%.
+          </div>
+        </div>
+
+        {/* Score grid example */}
+        <div>
+          <div style={{fontSize:10,color:C.dim,fontWeight:600,marginBottom:6}}>② 6×6 POISSON SCORE GRID</div>
+          <div style={{overflowX:"auto",marginBottom:8}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:6}}>
+              xG → <span style={{color:C.green,fontWeight:700}}>Brazil {GUIDE_EXAMPLE.hXg.toFixed(2)}</span>
+              {" · "}
+              <span style={{color:C.red,fontWeight:700}}>France {GUIDE_EXAMPLE.aXg.toFixed(2)}</span>
+            </div>
+            <table style={{borderCollapse:"collapse",fontSize:9}}>
+              <thead>
+                <tr>
+                  <td style={{padding:"3px 6px",color:C.muted,fontWeight:600}}>H╲A</td>
+                  {[0,1,2,3,4,5].map(j=><td key={j} style={{padding:"3px 7px",textAlign:"center",color:C.dim,fontWeight:600}}>A={j}</td>)}
+                </tr>
+              </thead>
+              <tbody>
+                {GUIDE_EXAMPLE.mat.map((row,i)=>(
+                  <tr key={i}>
+                    <td style={{padding:"3px 6px",color:C.dim,fontWeight:600}}>H={i}</td>
+                    {row.map((v,j)=>{
+                      const a=v/Math.max(...GUIDE_EXAMPLE.mat.flat());
+                      const bg=i>j?`rgba(34,197,94,${a*.6})`:i===j?`rgba(245,158,11,${a*.6})`:`rgba(239,68,68,${a*.6})`;
+                      const highlight=(i===2&&j===1); // highlight 2-1 as most likely
+                      return (
+                        <td key={j} style={{padding:"3px 7px",textAlign:"center",background:bg,borderRadius:3,minWidth:30,
+                          outline:highlight?"2px solid #fff":"none",outlineOffset:-1,fontWeight:highlight?800:400,color:"#fff",fontSize:highlight?10:9}}>
+                          {v.toFixed(1)}%
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{fontSize:10,color:C.muted,lineHeight:1.7,background:C.deep,borderRadius:6,padding:"8px 10px"}}>
+            <div style={{marginBottom:4}}><span style={{color:"#f8fafc",fontWeight:700}}>Rows = home goals, Columns = away goals.</span> Each cell shows the % probability of that exact scoreline.</div>
+            <div style={{marginBottom:4}}><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(34,197,94,.5)",marginRight:4,verticalAlign:"middle"}}/>Green cells = home win &nbsp;·&nbsp; <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(245,158,11,.5)",marginRight:4,verticalAlign:"middle"}}/>Amber = draw &nbsp;·&nbsp; <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(239,68,68,.5)",marginRight:4,verticalAlign:"middle"}}/>Red = away win</div>
+            <div>The <span style={{color:"#fff",fontWeight:700,outline:"1px solid #fff",padding:"0 3px",borderRadius:2}}>outlined cell</span> (H=2, A=1) is the single most likely scoreline at {GUIDE_EXAMPLE.mat[2][1].toFixed(1)}%.</div>
+          </div>
+        </div>
+      </section>
+
     </div>
   );
 }
