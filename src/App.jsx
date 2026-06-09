@@ -91,12 +91,11 @@ const REF_BIAS = {
 };
 
 // ── SCENARIO MODIFIERS ────────────────────────────────────────────────────────
-// hOffM = home attack multiplier, aDefM = away defense vulnerability,
-// aOffM = away attack multiplier, hDefM = home defense vulnerability
+// hScale/aScale multiply final xG after all modifiers — keeps differences visible
 const SCENARIOS = {
-  base:  {label:"Base",        icon:"⚖",  desc:"Expected outcomes",          col:"#3b82f6", hOffM:1.00, aDefM:1.00, aOffM:1.00, hDefM:1.00},
-  best:  {label:"Optimistic",  icon:"🔥", desc:"Open, high-scoring match",   col:"#22c55e", hOffM:1.28, aDefM:1.18, aOffM:1.28, hDefM:1.18},
-  worst: {label:"Pessimistic", icon:"🧱", desc:"Defensive, low-scoring game", col:"#ef4444", hOffM:0.78, aDefM:0.82, aOffM:0.78, hDefM:0.82},
+  base:  {label:"Base",        icon:"⚖",  desc:"Expected outcomes",           col:"#3b82f6", hScale:1.00, aScale:1.00},
+  best:  {label:"Optimistic",  icon:"🔥", desc:"Open, high-scoring match",    col:"#22c55e", hScale:1.70, aScale:1.70},
+  worst: {label:"Pessimistic", icon:"🧱", desc:"Defensive, low-scoring game", col:"#ef4444", hScale:0.48, aScale:0.48},
 };
 
 // Position role labels / colours
@@ -120,9 +119,10 @@ function calcMatch(hn, an, refC="UEFA", cap=70000, scenario="base") {
   const capB = cap>80000?1.03:1.0;
   const rb   = REF_BIAS[refC]||{};
   const pw   = x=>(x.k*.20+x.q*.20+x.ro*.15+x.b*.15+x.kn*.15+x.p*.15)/100;
-  let hXg = h.xgOff * sc.hOffM * (1 - a.xgDef * sc.aDefM/3) * capB * (1+(rb[CONF[hn]]||0)) * (0.85+pw(h.r)*.3);
-  let aXg = a.xgOff * sc.aOffM * (1 - h.xgDef * sc.hDefM/3)         * (1+(rb[CONF[an]]||0)) * (0.85+pw(a.r)*.3);
-  hXg=Math.max(0.1,hXg); aXg=Math.max(0.1,aXg);
+  // Base xG first, then apply scenario scale directly
+  let hXg = h.xgOff*(1-a.xgDef/3)*capB*(1+(rb[CONF[hn]]||0))*(0.85+pw(h.r)*.3) * sc.hScale;
+  let aXg = a.xgOff*(1-h.xgDef/3)     *(1+(rb[CONF[an]]||0))*(0.85+pw(a.r)*.3) * sc.aScale;
+  hXg=Math.max(0.05,hXg); aXg=Math.max(0.05,aXg);
   const mat=[]; let W=0,D=0,L=0;
   for(let i=0;i<=5;i++){mat[i]=[];for(let j=0;j<=5;j++){
     const p=poisson(hXg,i)*poisson(aXg,j)*100;
@@ -345,8 +345,8 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
           <div style={{background:C.card,borderRadius:8,padding:10,marginBottom:12}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
               <span style={{fontSize:10,color:C.muted,fontWeight:600}}>PREDICTION</span>
-              <span style={{fontSize:9,background:sc.col+"22",color:sc.col,borderRadius:10,padding:"1px 8px",fontWeight:700}}>{sc.icon} {sc.label}</span>
-              <span style={{fontSize:9,color:C.muted}}>{sc.desc}</span>
+              <span style={{fontSize:9,background:sc.col,color:"#fff",borderRadius:10,padding:"2px 8px",fontWeight:700}}>{sc.icon} {sc.label}</span>
+              <span style={{fontSize:9,color:C.dim}}>{sc.desc}</span>
             </div>
             <WinBar W={res.W} D={res.D} L={res.L}/>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted,marginTop:3}}>
@@ -661,7 +661,7 @@ function SimulateTab({tMap,sMap,mob,scenario="base"}) {
           {/* Score card */}
           <div style={{background:C.deep,borderRadius:8,padding:14}}>
             <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:8}}>
-              <span style={{fontSize:10,background:sc.col+"22",color:sc.col,borderRadius:10,padding:"2px 10px",fontWeight:700}}>{sc.icon} {sc.label} — {sc.desc}</span>
+              <span style={{fontSize:10,background:sc.col,color:"#fff",borderRadius:10,padding:"3px 12px",fontWeight:700}}>{sc.icon} {sc.label} — {sc.desc}</span>
             </div>
             <div style={{display:"flex",justifyContent:"space-around",alignItems:"center",gap:8,marginBottom:10}}>
               <div style={{textAlign:"center",minWidth:0}}>
@@ -844,17 +844,18 @@ export default function App() {
 
       {/* Scenario toggle bar */}
       <div style={{background:"#020617",borderBottom:"1px solid #1e293b",padding:"6px 12px",display:"flex",alignItems:"center",gap:6,flexShrink:0,flexWrap:"wrap"}}>
-        <span style={{fontSize:9,color:C.muted,fontWeight:600,marginRight:2}}>SCENARIO</span>
+        <span style={{fontSize:9,color:"#fff",fontWeight:700,marginRight:2,opacity:.7}}>SCENARIO</span>
         {Object.entries(SCENARIOS).map(([k,s])=>(
           <button key={k} onClick={()=>setScenario(k)}
-            style={{padding:"3px 12px",borderRadius:20,border:`1px solid ${scenario===k?s.col:"#334155"}`,cursor:"pointer",fontSize:10,fontWeight:700,
-              background:scenario===k?s.col+"22":"transparent",
-              color:scenario===k?s.col:C.muted,
-              transition:"all .15s"}}>
+            style={{padding:"4px 14px",borderRadius:20,border:`1px solid ${scenario===k?s.col:"#475569"}`,cursor:"pointer",fontSize:10,fontWeight:700,
+              background:scenario===k?s.col:"#1e293b",
+              color:"#fff",
+              transition:"all .15s",
+              boxShadow:scenario===k?`0 0 8px ${s.col}66`:"none"}}>
             {s.icon} {s.label}
           </button>
         ))}
-        <span style={{fontSize:9,color:C.muted,marginLeft:4}}>{SCENARIOS[scenario].desc}</span>
+        <span style={{fontSize:9,color:"#fff",marginLeft:4,opacity:.6}}>{SCENARIOS[scenario].desc}</span>
       </div>
 
       {/* Loading screen */}
