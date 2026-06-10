@@ -383,32 +383,106 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
   const [sel,setSel]=useState(null);
   const [stage,setStage]=useState("group");
   const [grp,setGrp]=useState("ALL");
+  const [teamQ,setTeamQ]=useState("");
+  const [teamFilter,setTeamFilter]=useState(null); // {id, name_en, flag}
 
   const stages=[{id:"group",l:"Group"},{id:"r32",l:"R32"},{id:"r16",l:"R16"},{id:"qf",l:"QF"},{id:"sf",l:"SF"},{id:"third",l:"3rd"},{id:"final",l:"Final"}];
 
+  // Sorted unique teams for suggestions
+  const allTeams=useMemo(()=>Object.values(tMap).sort((a,b)=>a.name_en.localeCompare(b.name_en)),[tMap]);
+  const suggestions=useMemo(()=>{
+    if(!teamQ.trim()) return [];
+    const q=teamQ.toLowerCase();
+    return allTeams.filter(t=>t.name_en.toLowerCase().includes(q)).slice(0,8);
+  },[allTeams,teamQ]);
+
+  function selectTeam(t) {
+    setTeamFilter(t);
+    setTeamQ("");
+  }
+  function clearTeam() {
+    setTeamFilter(null);
+    setTeamQ("");
+  }
+
   const shown=useMemo(()=>matches.filter(g=>{
-    if(g.type!==stage)return false;
-    if(stage==="group"&&grp!=="ALL"&&g.group!==grp)return false;
+    // Team filter overrides stage/group
+    if(teamFilter) {
+      return g.home_team_id===teamFilter.id || g.away_team_id===teamFilter.id;
+    }
+    if(g.type!==stage) return false;
+    if(stage==="group"&&grp!=="ALL"&&g.group!==grp) return false;
     return true;
-  }),[matches,stage,grp]);
+  }),[matches,stage,grp,teamFilter]);
 
   return (
     <div>
       {sel&&<MatchDetail game={sel} tMap={tMap} sMap={sMap} onClose={()=>setSel(null)} mob={mob} scenario={scenario}/>}
 
-      {/* Stage pills */}
-      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-        {stages.map(s=>(
-          <button key={s.id} onClick={()=>{setStage(s.id);setGrp("ALL");}}
-            style={{padding:"4px 12px",borderRadius:20,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,
-              background:stage===s.id?C.blue:"#1a2744",color:stage===s.id?"#fff":C.dim}}>
-            {s.l}
-          </button>
-        ))}
+      {/* ── Team filter ── */}
+      <div style={{marginBottom:8,position:"relative"}}>
+        {teamFilter ? (
+          /* Active filter chip */
+          <div style={{display:"flex",alignItems:"center",gap:8,background:C.card,border:`1px solid ${C.blue}`,borderRadius:8,padding:"7px 10px"}}>
+            <FlagImg url={teamFilter.flag} name={teamFilter.name_en} size={20}/>
+            <span style={{fontSize:12,fontWeight:700,color:"#fff",flex:1}}>{teamFilter.name_en}</span>
+            <span style={{fontSize:10,color:C.muted}}>{shown.length} match{shown.length!==1?"es":""}</span>
+            <button onClick={clearTeam}
+              style={{background:"none",border:"1px solid #475569",borderRadius:5,color:C.muted,cursor:"pointer",fontSize:13,padding:"1px 7px",lineHeight:1,flexShrink:0}}>
+              ✕
+            </button>
+          </div>
+        ) : (
+          /* Search input */
+          <div style={{position:"relative"}}>
+            <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+              <span style={{position:"absolute",left:10,fontSize:14,pointerEvents:"none"}}>🔍</span>
+              <input
+                value={teamQ}
+                onChange={e=>setTeamQ(e.target.value)}
+                placeholder="Filter by team…"
+                style={{width:"100%",background:C.card,border:"1px solid #334155",borderRadius:8,padding:"8px 10px 8px 32px",
+                  color:"#fff",fontSize:12,outline:"none"}}
+              />
+              {teamQ&&<button onClick={()=>setTeamQ("")}
+                style={{position:"absolute",right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}}>
+                ✕
+              </button>}
+            </div>
+            {/* Suggestions dropdown */}
+            {suggestions.length>0&&(
+              <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,background:"#0d1f35",border:"1px solid #1e293b",borderRadius:8,zIndex:50,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+                {suggestions.map(t=>(
+                  <button key={t.id} onClick={()=>selectTeam(t)}
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"none",border:"none",cursor:"pointer",textAlign:"left"}}
+                    onMouseEnter={e=>e.currentTarget.style.background="#1e293b"}
+                    onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    <FlagImg url={t.flag} name={t.name_en} size={20}/>
+                    <span style={{fontSize:12,fontWeight:600,color:"#fff",flex:1}}>{t.name_en}</span>
+                    <span style={{fontSize:9,color:C.muted}}>{t.fifa_code}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* Stage pills — hidden when team filter active */}
+      {!teamFilter&&(
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+          {stages.map(s=>(
+            <button key={s.id} onClick={()=>{setStage(s.id);setGrp("ALL");}}
+              style={{padding:"4px 12px",borderRadius:20,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,
+                background:stage===s.id?C.blue:"#1a2744",color:stage===s.id?"#fff":C.dim}}>
+              {s.l}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Group filter */}
-      {stage==="group"&&(
+      {!teamFilter&&stage==="group"&&(
         <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:8}}>
           {["ALL","A","B","C","D","E","F","G","H","I","J","K","L"].map(g=>(
             <button key={g} onClick={()=>setGrp(g)}
@@ -432,9 +506,12 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
             const live=g.time_elapsed&&g.time_elapsed!=="notstarted"&&!done;
             const res=!done&&!live?calcMatch(hn,an,"UEFA",sMap[g.stadium_id]?.capacity,scenario):null;
 
+            const isHome=teamFilter&&g.home_team_id===teamFilter.id;
+            const isAway=teamFilter&&g.away_team_id===teamFilter.id;
             return (
               <div key={g.id} onClick={()=>setSel(g)}
-                style={{background:C.card,borderRadius:8,padding:mob?"9px 10px":"10px 14px",cursor:"pointer",border:live?`1px solid ${C.amber}`:"1px solid transparent"}}
+                style={{background:C.card,borderRadius:8,padding:mob?"9px 10px":"10px 14px",cursor:"pointer",
+                  border:live?`1px solid ${C.amber}`:teamFilter?`1px solid #334155`:"1px solid transparent"}}
                 onMouseEnter={e=>e.currentTarget.style.background="#243447"}
                 onMouseLeave={e=>e.currentTarget.style.background=C.card}>
 
@@ -447,8 +524,12 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
                 {/* Teams + score */}
                 <div style={{display:"flex",alignItems:"center",gap:mob?6:10,minWidth:0}}>
                   <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-end",gap:5,minWidth:0}}>
-                    <span style={{fontSize:mob?12:13,fontWeight:700,color:C.hi,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{hn}</span>
-                    <FlagImg url={home?.flag} name={hn} size={16}/>
+                    <span style={{fontSize:mob?12:13,fontWeight:700,
+                      color:isHome?"#fff":C.hi,
+                      textDecoration:isHome?"underline":"none",
+                      textUnderlineOffset:3,
+                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{hn}</span>
+                    <FlagImg url={home?.flag} name={hn} size={isHome?20:16}/>
                   </div>
                   <div style={{textAlign:"center",flexShrink:0,minWidth:44}}>
                     {done||live?(
@@ -463,8 +544,12 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
                     )}
                   </div>
                   <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-start",gap:5,minWidth:0}}>
-                    <FlagImg url={away?.flag} name={an} size={16}/>
-                    <span style={{fontSize:mob?12:13,fontWeight:700,color:C.hi,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{an}</span>
+                    <FlagImg url={away?.flag} name={an} size={isAway?20:16}/>
+                    <span style={{fontSize:mob?12:13,fontWeight:700,
+                      color:isAway?"#fff":C.hi,
+                      textDecoration:isAway?"underline":"none",
+                      textUnderlineOffset:3,
+                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{an}</span>
                   </div>
                 </div>
 
