@@ -796,10 +796,24 @@ const GUIDE_EXAMPLE = (()=>{
 
 function simGroupStage(matches, tMap, sMap, tables, scenario) {
   const st = {};
-  tables.forEach(g => {
-    st[g.group] = {};
-    g.teams.forEach(t => { st[g.group][t.team_id] = { ...t }; });
+
+  // Seed from match data first (works even when tables API returns all zeros)
+  matches.filter(m => m.type==="group").forEach(m => {
+    if (!m.group) return;
+    if (!st[m.group]) st[m.group] = {};
+    [m.home_team_id, m.away_team_id].forEach(tid => {
+      if (tid && !st[m.group][tid])
+        st[m.group][tid] = {team_id:tid,mp:0,w:0,d:0,l:0,gf:0,ga:0,gd:0,pts:0};
+    });
   });
+
+  // Overlay real standings from API (may be all zeros before tournament starts)
+  tables.forEach(g => {
+    if (!st[g.group]) st[g.group] = {};
+    g.teams.forEach(t => { st[g.group][t.team_id] = {...t}; });
+  });
+
+  // Add simulated result for every unplayed group match
   matches.filter(m => m.type==="group" && m.finished!=="TRUE").forEach(m => {
     const grp = m.group;
     if (!grp || !st[grp]) return;
@@ -826,6 +840,7 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
     upd(m.home_team_id, hg, ag);
     upd(m.away_team_id, ag, hg);
   });
+
   const sorted = {};
   Object.entries(st).forEach(([g,obj]) => {
     sorted[g] = Object.values(obj).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
@@ -834,32 +849,50 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
 }
 
 function runTournamentSim(matches, tMap, sMap, tables, scenario) {
+  if (!matches.length) return null;
+
   const groupResults = simGroupStage(matches, tMap, sMap, tables, scenario);
   const thirds = Object.entries(groupResults)
     .map(([g,teams])=>({...teams[2],group:g}))
     .filter(t=>t?.team_id)
     .sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
-  let thirdIdx = 0;
+  const thirdsUsed = new Set();
   const matchWinners = {};
 
+  function nextThird(groups) {
+    for (const t of thirds) {
+      if (!thirdsUsed.has(t.team_id) && (!groups||groups.includes(t.group))) {
+        thirdsUsed.add(t.team_id); return t.team_id;
+      }
+    }
+    for (const t of thirds) {
+      if (!thirdsUsed.has(t.team_id)) { thirdsUsed.add(t.team_id); return t.team_id; }
+    }
+    return null;
+  }
+
   function resolve(label, knownId) {
-    if (knownId) return knownId;
+    // knownId must be a non-empty truthy value (not 0 / null / "")
+    if (knownId && knownId !== "0") return knownId;
     if (!label) return null;
     let m;
-    m = label.match(/(?:1st?|Winner[^M]*)([A-L])(?!\w)/i);
-    if (m) return groupResults[m[1]]?.[0]?.team_id??null;
-    m = label.match(/(?:2nd?|Runner.?up[^M]*)([A-L])(?!\w)/i);
-    if (m) return groupResults[m[1]]?.[1]?.team_id??null;
+    // "1A" or "1 A" or "Winner Group A" or "Winner A"
+    m = label.match(/^1([A-L])$/i) || label.match(/(?:winner|1st?)[^M]*\b([A-L])\b/i);
+    if (m) return groupResults[m[1].toUpperCase()]?.[0]?.team_id ?? null;
+    // "2A" or "Runner-up Group A"
+    m = label.match(/^2([A-L])$/i) || label.match(/(?:runner.?up|2nd?)[^M]*\b([A-L])\b/i);
+    if (m) return groupResults[m[1].toUpperCase()]?.[1]?.team_id ?? null;
+    // "3rd" / "Best 3rd" — with optional group letters
     if (/3rd|third|best/i.test(label)) {
-      const gs = label.match(/([A-L])/g);
-      const candidate = gs ? thirds.find(t=>gs.includes(t.group)&&!t._used) : thirds[thirdIdx];
-      if (candidate) { candidate._used=true; return candidate.team_id; }
-      return thirds[thirdIdx++]?.team_id??null;
+      const gs = (label.match(/\b([A-L])\b/g)||[]).map(s=>s.toUpperCase());
+      return nextThird(gs.length ? gs : null);
     }
-    m = label.match(/Winner.*?(\w+)/i);
-    if (m) return matchWinners[m[1]]??null;
-    m = label.match(/Loser.*?(\w+)/i);
-    if (m) return matchWinners[`L${m[1]}`]??null;
+    // "Winner 37" or "Winner of match 37"
+    m = label.match(/winner.*?(\d+)/i);
+    if (m) return matchWinners[m[1]] ?? null;
+    // "Loser 37"
+    m = label.match(/loser.*?(\d+)/i);
+    if (m) return matchWinners[`L${m[1]}`] ?? null;
     return null;
   }
 
@@ -884,7 +917,7 @@ function runTournamentSim(matches, tMap, sMap, tables, scenario) {
           if(hg>ag) winner_id=hid;
           else if(ag>hg) winner_id=aid;
           else { pens=true; winner_id=res.W>=res.L?hid:aid; }
-        } else winner_id=hid||aid;
+        } else { winner_id=hid||aid; }
       }
       matchWinners[String(m.id)]=winner_id;
       matchWinners[`L${String(m.id)}`]=winner_id===hid?aid:hid;
@@ -938,15 +971,19 @@ function MatchPill({r,tMap}) {
 }
 
 function TournamentTab({matches,tMap,sMap,tables,mob,scenario}) {
-  const [collapsed,setCollapsed]=useState({r32:true});
+  // R32 collapsed by default (lots of matches); others open
+  const [collapsed,setCollapsed]=useState({r32:true,r16:false,qf:false,sf:false,third:false,final:false});
   const toggle=id=>setCollapsed(p=>({...p,[id]:!p[id]}));
 
-  const sim=useMemo(()=>{
-    if(!tables.length||!matches.length) return null;
-    return runTournamentSim(matches,tMap,sMap,tables,scenario);
-  },[matches,tMap,sMap,tables,scenario]);
+  const sim=useMemo(()=>runTournamentSim(matches,tMap,sMap,tables,scenario),
+    [matches,tMap,sMap,tables,scenario]);
 
-  if(!sim) return <div style={{padding:40,textAlign:"center",color:C.muted}}>Waiting for data…</div>;
+  if(!sim||!matches.length) return (
+    <div style={{padding:40,textAlign:"center",color:C.muted}}>
+      <div style={{fontSize:24,marginBottom:8}}>⏳</div>
+      Loading match data…
+    </div>
+  );
 
   const sc=SCENARIOS[scenario];
   const champ=sim.championTeam;
@@ -1012,32 +1049,59 @@ function TournamentTab({matches,tMap,sMap,tables,mob,scenario}) {
           Green = qualified (top 2) · * = best 3rd place · Updates when real results arrive
         </div>
         <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(3,1fr)",gap:8}}>
-          {Object.entries(sim.groupResults).sort().map(([g,teams])=>(
-            <div key={g} style={{background:C.deep,borderRadius:8,padding:"8px 10px"}}>
-              <div style={{fontSize:11,fontWeight:800,color:"#93c5fd",marginBottom:5}}>Group {g}</div>
-              {teams.map((t,i)=>{
-                const team=tMap[t.team_id];
-                const is3q=i===2&&sim.thirds.slice(0,8).some(x=>x.team_id===t.team_id);
-                const q=i<2||is3q;
-                return (
-                  <div key={t.team_id} style={{display:"grid",gridTemplateColumns:"14px 14px 1fr auto",
-                    columnGap:3,alignItems:"center",padding:"3px 0",
-                    borderBottom:i<teams.length-1?"1px solid #0f172a":"none"}}>
-                    <span style={{fontSize:9,color:q?C.green:C.muted,fontWeight:q?700:400,textAlign:"center"}}>
-                      {i+1}{is3q?"*":""}
-                    </span>
-                    <FlagImg url={team?.flag} name={team?.name_en||""} size={12}/>
-                    <span style={{fontSize:9,color:q?"#fff":C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      {team?.name_en||t.team_id}
-                    </span>
-                    <span style={{fontSize:9,fontWeight:700,color:q?"#fff":C.dim,whiteSpace:"nowrap"}}>
-                      {t.pts}p
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+          {Object.entries(sim.groupResults).sort().map(([g,teams])=>{
+            const grpMatches = matches.filter(m=>m.type==="group"&&m.group===g);
+            const played = grpMatches.filter(m=>m.finished==="TRUE").length;
+            const total  = grpMatches.length;
+            return (
+              <div key={g} style={{background:C.deep,borderRadius:8,padding:"8px 10px"}}>
+                {/* Group header */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                  <span style={{fontSize:11,fontWeight:800,color:"#93c5fd"}}>Group {g}</span>
+                  <span style={{fontSize:8,color:C.muted}}>{played}/{total} played</span>
+                </div>
+                {/* Mini standings table */}
+                <div style={{fontSize:8,color:C.muted,display:"grid",
+                  gridTemplateColumns:"12px 14px 1fr 18px 18px 18px 22px",
+                  columnGap:2,marginBottom:3,paddingBottom:3,borderBottom:"1px solid #0f172a"}}>
+                  <span/><span/><span>Team</span>
+                  <span style={{textAlign:"center"}}>W</span>
+                  <span style={{textAlign:"center"}}>D</span>
+                  <span style={{textAlign:"center"}}>L</span>
+                  <span style={{textAlign:"center",fontWeight:700}}>Pts</span>
+                </div>
+                {teams.map((t,i)=>{
+                  const team=tMap[t.team_id];
+                  const is3q=i===2&&sim.thirds.slice(0,8).some(x=>x.team_id===t.team_id);
+                  const q=i<2||is3q;
+                  return (
+                    <div key={t.team_id} style={{display:"grid",
+                      gridTemplateColumns:"12px 14px 1fr 18px 18px 18px 22px",
+                      columnGap:2,alignItems:"center",padding:"3px 0",
+                      borderBottom:i<teams.length-1?"1px solid #0f172a":"none",
+                      background:q?"#0f2040":"transparent",borderRadius:3}}>
+                      <span style={{fontSize:8,color:q?C.green:C.muted,fontWeight:q?700:400,textAlign:"center"}}>
+                        {i+1}{is3q?"*":""}
+                      </span>
+                      <FlagImg url={team?.flag} name={team?.name_en||""} size={12}/>
+                      <span style={{fontSize:9,color:q?"#fff":C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {team?.name_en||t.team_id}
+                      </span>
+                      <span style={{fontSize:9,textAlign:"center",color:C.dim}}>{t.w}</span>
+                      <span style={{fontSize:9,textAlign:"center",color:C.dim}}>{t.d}</span>
+                      <span style={{fontSize:9,textAlign:"center",color:C.dim}}>{t.l}</span>
+                      <span style={{fontSize:9,fontWeight:800,textAlign:"center",color:q?"#fff":C.dim}}>
+                        {t.pts}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{marginTop:8,fontSize:9,color:C.muted}}>
+          Green rows qualify · * = best 3rd place · Predicted results shown; real results override on match day
         </div>
       </section>
 
