@@ -792,6 +792,261 @@ const GUIDE_EXAMPLE = (()=>{
   return {mat,W,D,L,hXg,aXg};
 })();
 
+// ── TOURNAMENT SIMULATION ENGINE ─────────────────────────────────────────────
+
+function simGroupStage(matches, tMap, sMap, tables, scenario) {
+  const st = {};
+  tables.forEach(g => {
+    st[g.group] = {};
+    g.teams.forEach(t => { st[g.group][t.team_id] = { ...t }; });
+  });
+  matches.filter(m => m.type==="group" && m.finished!=="TRUE").forEach(m => {
+    const grp = m.group;
+    if (!grp || !st[grp]) return;
+    const ht = tMap[m.home_team_id], at = tMap[m.away_team_id];
+    if (!ht || !at) return;
+    const res = calcMatch(ht.name_en, at.name_en, "UEFA", sMap[m.stadium_id]?.capacity, scenario);
+    if (!res) return;
+    let hg, ag;
+    if (res.W > res.L && res.W > res.D) {
+      hg = Math.max(Math.round(res.hXg),1); ag = Math.round(res.aXg);
+      if (hg<=ag) ag = hg-1;
+    } else if (res.L > res.W && res.L > res.D) {
+      hg = Math.round(res.hXg); ag = Math.max(Math.round(res.aXg),1);
+      if (ag<=hg) hg = ag-1;
+    } else {
+      hg = ag = Math.max(Math.round((res.hXg+res.aXg)/2), 0);
+    }
+    hg = Math.max(hg,0); ag = Math.max(ag,0);
+    const upd = (tid, gf, ga) => {
+      const e = st[grp]?.[tid]; if (!e) return;
+      e.mp++; e.gf+=gf; e.ga+=ga; e.gd=e.gf-e.ga;
+      if (gf>ga){e.w++;e.pts+=3;} else if(gf===ga){e.d++;e.pts+=1;} else e.l++;
+    };
+    upd(m.home_team_id, hg, ag);
+    upd(m.away_team_id, ag, hg);
+  });
+  const sorted = {};
+  Object.entries(st).forEach(([g,obj]) => {
+    sorted[g] = Object.values(obj).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+  });
+  return sorted;
+}
+
+function runTournamentSim(matches, tMap, sMap, tables, scenario) {
+  const groupResults = simGroupStage(matches, tMap, sMap, tables, scenario);
+  const thirds = Object.entries(groupResults)
+    .map(([g,teams])=>({...teams[2],group:g}))
+    .filter(t=>t?.team_id)
+    .sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+  let thirdIdx = 0;
+  const matchWinners = {};
+
+  function resolve(label, knownId) {
+    if (knownId) return knownId;
+    if (!label) return null;
+    let m;
+    m = label.match(/(?:1st?|Winner[^M]*)([A-L])(?!\w)/i);
+    if (m) return groupResults[m[1]]?.[0]?.team_id??null;
+    m = label.match(/(?:2nd?|Runner.?up[^M]*)([A-L])(?!\w)/i);
+    if (m) return groupResults[m[1]]?.[1]?.team_id??null;
+    if (/3rd|third|best/i.test(label)) {
+      const gs = label.match(/([A-L])/g);
+      const candidate = gs ? thirds.find(t=>gs.includes(t.group)&&!t._used) : thirds[thirdIdx];
+      if (candidate) { candidate._used=true; return candidate.team_id; }
+      return thirds[thirdIdx++]?.team_id??null;
+    }
+    m = label.match(/Winner.*?(\w+)/i);
+    if (m) return matchWinners[m[1]]??null;
+    m = label.match(/Loser.*?(\w+)/i);
+    if (m) return matchWinners[`L${m[1]}`]??null;
+    return null;
+  }
+
+  const roundResults = {};
+  ["r32","r16","qf","sf","third","final"].forEach(rnd => {
+    const rndMatches = matches.filter(m=>m.type===rnd)
+      .sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
+    roundResults[rnd] = rndMatches.map(m => {
+      const hid = resolve(m.home_team_label, m.home_team_id);
+      const aid = resolve(m.away_team_label, m.away_team_id);
+      const ht=tMap[hid], at=tMap[aid];
+      const hn=ht?.name_en||m.home_team_label||"TBD";
+      const an=at?.name_en||m.away_team_label||"TBD";
+      let hg=0,ag=0,winner_id,pens=false,real=false;
+      if (m.finished==="TRUE") {
+        hg=+m.home_score; ag=+m.away_score; real=true;
+        winner_id = hg>ag?hid:ag>hg?aid:hid;
+      } else {
+        const res=(hid&&aid)?calcMatch(hn,an,"UEFA",sMap[m.stadium_id]?.capacity,scenario):null;
+        if (res) {
+          hg=Math.round(res.hXg); ag=Math.round(res.aXg);
+          if(hg>ag) winner_id=hid;
+          else if(ag>hg) winner_id=aid;
+          else { pens=true; winner_id=res.W>=res.L?hid:aid; }
+        } else winner_id=hid||aid;
+      }
+      matchWinners[String(m.id)]=winner_id;
+      matchWinners[`L${String(m.id)}`]=winner_id===hid?aid:hid;
+      const wt=tMap[winner_id];
+      return {id:m.id,hn,an,hid,aid,hg,ag,winner_id,winner:wt?.name_en||hn,winnerFlag:wt?.flag,pens,real};
+    });
+  });
+
+  const champion_id = roundResults.final?.[0]?.winner_id;
+  return {groupResults,thirds,roundResults,champion_id,championTeam:tMap[champion_id]};
+}
+
+// ── TOURNAMENT TAB ─────────────────────────────────────────────────────────────
+
+const ROUND_META=[
+  {id:"r32",   label:"Round of 32",  cols:2},
+  {id:"r16",   label:"Round of 16",  cols:2},
+  {id:"qf",    label:"Quarterfinals",cols:2},
+  {id:"sf",    label:"Semifinals",   cols:2},
+  {id:"third", label:"3rd Place",    cols:1},
+  {id:"final", label:"⚽ Final",      cols:1},
+];
+
+function MatchPill({r,tMap}) {
+  const hWin=r.winner_id===r.hid, aWin=r.winner_id===r.aid;
+  return (
+    <div style={{background:"#0a1628",borderRadius:8,padding:"8px 10px",
+      border:`1px solid ${r.real?"#1e3a5f":r.pens?"#f59e0b33":"#1e3a8a"}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:5}}>
+        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-end",gap:5,minWidth:0}}>
+          <span style={{fontSize:10,fontWeight:hWin?800:500,color:hWin?"#fff":C.muted,
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.hn}</span>
+          <FlagImg url={tMap[r.hid]?.flag} name={r.hn} size={hWin?18:14}/>
+        </div>
+        <div style={{textAlign:"center",flexShrink:0,minWidth:32}}>
+          <div style={{fontSize:14,fontWeight:900,color:"#fff",lineHeight:1}}>{r.hg}–{r.ag}</div>
+          {r.pens&&<div style={{fontSize:7,color:C.amber,fontWeight:600}}>pens</div>}
+          {r.real&&<div style={{fontSize:7,color:C.green,fontWeight:600}}>FT</div>}
+        </div>
+        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-start",gap:5,minWidth:0}}>
+          <FlagImg url={tMap[r.aid]?.flag} name={r.an} size={aWin?18:14}/>
+          <span style={{fontSize:10,fontWeight:aWin?800:500,color:aWin?"#fff":C.muted,
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.an}</span>
+        </div>
+      </div>
+      <div style={{textAlign:"center",fontSize:9,color:r.real?C.green:C.blue,marginTop:3,fontWeight:600}}>
+        {r.real?`✓ ${r.winner}`:`⇒ ${r.winner}${r.pens?" (pens)":""}`}
+      </div>
+    </div>
+  );
+}
+
+function TournamentTab({matches,tMap,sMap,tables,mob,scenario}) {
+  const [collapsed,setCollapsed]=useState({r32:true});
+  const toggle=id=>setCollapsed(p=>({...p,[id]:!p[id]}));
+
+  const sim=useMemo(()=>{
+    if(!tables.length||!matches.length) return null;
+    return runTournamentSim(matches,tMap,sMap,tables,scenario);
+  },[matches,tMap,sMap,tables,scenario]);
+
+  if(!sim) return <div style={{padding:40,textAlign:"center",color:C.muted}}>Waiting for data…</div>;
+
+  const sc=SCENARIOS[scenario];
+  const champ=sim.championTeam;
+  const cp=champ?PROFILE[champ.name_en]:null;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+
+      {/* Champion */}
+      <div style={{
+        background:cp?`linear-gradient(135deg,${cp.col}44 0%,#0d1f35 65%)`:"#0d1f35",
+        border:`2px solid ${cp?.col||C.blue}`,borderRadius:12,padding:mob?14:20,textAlign:"center",
+      }}>
+        <div style={{fontSize:34,lineHeight:1,marginBottom:4}}>🏆</div>
+        <div style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:1.5,marginBottom:8}}>
+          PREDICTED CHAMPION · {sc.icon} {sc.label.toUpperCase()}
+        </div>
+        {champ?(
+          <>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:6}}>
+              <FlagImg url={champ.flag} name={champ.name_en} size={mob?36:52}/>
+              <div style={{fontSize:mob?22:30,fontWeight:900,color:"#fff"}}>{champ.name_en}</div>
+            </div>
+            {cp&&<div style={{fontSize:10,color:C.muted}}>{cp.style} · Off {cp.xgOff} · Def {cp.xgDef}</div>}
+          </>
+        ):(
+          <div style={{fontSize:16,color:C.muted}}>TBD</div>
+        )}
+        <div style={{marginTop:10,fontSize:9,color:C.muted}}>
+          Switches scenario → recalculates all rounds instantly · Real results lock in on match day
+        </div>
+      </div>
+
+      {/* Knockout rounds */}
+      {ROUND_META.map(({id,label,cols})=>{
+        const rnd=sim.roundResults[id];
+        if(!rnd?.length) return null;
+        const open=!collapsed[id];
+        const realN=rnd.filter(r=>r.real).length;
+        return (
+          <section key={id} style={{background:C.card,borderRadius:10,overflow:"hidden"}}>
+            <button onClick={()=>toggle(id)} style={{width:"100%",background:"none",border:"none",cursor:"pointer",
+              padding:"10px 14px",display:"flex",alignItems:"center",gap:8,textAlign:"left"}}>
+              <span style={{fontSize:13,fontWeight:800,color:"#93c5fd",flex:1}}>{label}</span>
+              <span style={{fontSize:9,color:C.muted}}>{rnd.length} match{rnd.length!==1?"es":""}</span>
+              {realN>0&&<span style={{fontSize:9,color:C.green,background:"#22c55e11",borderRadius:10,padding:"1px 7px",fontWeight:600}}>{realN} played</span>}
+              <span style={{fontSize:10,color:C.muted}}>{open?"▲":"▼"}</span>
+            </button>
+            {open&&(
+              <div style={{padding:"0 10px 10px",
+                display:"grid",gridTemplateColumns:cols===1||mob?"1fr":"1fr 1fr",gap:6}}>
+                {rnd.map(r=><MatchPill key={r.id} r={r} tMap={tMap}/>)}
+              </div>
+            )}
+          </section>
+        );
+      })}
+
+      {/* Group standings */}
+      <section style={{background:C.card,borderRadius:10,padding:mob?12:16}}>
+        <div style={{fontWeight:800,fontSize:13,color:"#93c5fd",marginBottom:3}}>Simulated Group Standings</div>
+        <div style={{fontSize:9,color:C.muted,marginBottom:10}}>
+          Green = qualified (top 2) · * = best 3rd place · Updates when real results arrive
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(3,1fr)",gap:8}}>
+          {Object.entries(sim.groupResults).sort().map(([g,teams])=>(
+            <div key={g} style={{background:C.deep,borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:11,fontWeight:800,color:"#93c5fd",marginBottom:5}}>Group {g}</div>
+              {teams.map((t,i)=>{
+                const team=tMap[t.team_id];
+                const is3q=i===2&&sim.thirds.slice(0,8).some(x=>x.team_id===t.team_id);
+                const q=i<2||is3q;
+                return (
+                  <div key={t.team_id} style={{display:"grid",gridTemplateColumns:"14px 14px 1fr auto",
+                    columnGap:3,alignItems:"center",padding:"3px 0",
+                    borderBottom:i<teams.length-1?"1px solid #0f172a":"none"}}>
+                    <span style={{fontSize:9,color:q?C.green:C.muted,fontWeight:q?700:400,textAlign:"center"}}>
+                      {i+1}{is3q?"*":""}
+                    </span>
+                    <FlagImg url={team?.flag} name={team?.name_en||""} size={12}/>
+                    <span style={{fontSize:9,color:q?"#fff":C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {team?.name_en||t.team_id}
+                    </span>
+                    <span style={{fontSize:9,fontWeight:700,color:q?"#fff":C.dim,whiteSpace:"nowrap"}}>
+                      {t.pts}p
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </section>
+
+    </div>
+  );
+}
+
+// ── GUIDE TAB ─────────────────────────────────────────────────────────────────
+
 function GuideTab({mob}) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -977,12 +1232,13 @@ function GuideTab({mob}) {
 // ── APP ───────────────────────────────────────────────────────────────────────
 
 const TABS=[
-  {id:"fixtures",l:"Fixtures",ic:"📅"},
-  {id:"groups",  l:"Groups",  ic:"🏆"},
-  {id:"teams",   l:"Teams",   ic:"🌍"},
-  {id:"simulate",l:"Simulate",ic:"🎯"},
-  {id:"stadiums",l:"Venues",  ic:"🏟"},
-  {id:"guide",   l:"Guide",   ic:"📐"},
+  {id:"fixtures",  l:"Fixtures",   ic:"📅"},
+  {id:"groups",    l:"Groups",     ic:"🏆"},
+  {id:"teams",     l:"Teams",      ic:"🌍"},
+  {id:"simulate",  l:"Simulate",   ic:"🎯"},
+  {id:"tournament",l:"Bracket",    ic:"🎲"},
+  {id:"stadiums",  l:"Venues",     ic:"🏟"},
+  {id:"guide",     l:"Guide",      ic:"📐"},
 ];
 
 export default function App() {
@@ -1108,12 +1364,13 @@ export default function App() {
       {/* Content */}
       {!loading&&(
         <main style={{flex:1,overflowY:"auto",padding:mob?"10px":"14px 20px",paddingBottom:`calc(16px + env(safe-area-inset-bottom,0px))`}}>
-          {tab==="fixtures"&&<FixturesTab matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
-          {tab==="groups"  &&<GroupsTab   tables={tables} tMap={tMap} mob={mob}/>}
-          {tab==="teams"   &&<TeamsTab    tMap={tMap} mob={mob}/>}
-          {tab==="simulate"&&<SimulateTab tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
-          {tab==="stadiums"&&<StadiumsTab sMap={sMap} matches={matches} mob={mob}/>}
-          {tab==="guide"   &&<GuideTab    mob={mob}/>}
+          {tab==="fixtures"  &&<FixturesTab   matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
+          {tab==="groups"    &&<GroupsTab     tables={tables} tMap={tMap} mob={mob}/>}
+          {tab==="teams"     &&<TeamsTab      tMap={tMap} mob={mob}/>}
+          {tab==="simulate"  &&<SimulateTab   tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
+          {tab==="tournament"&&<TournamentTab matches={matches} tMap={tMap} sMap={sMap} tables={tables} mob={mob} scenario={scenario}/>}
+          {tab==="stadiums"  &&<StadiumsTab   sMap={sMap} matches={matches} mob={mob}/>}
+          {tab==="guide"     &&<GuideTab      mob={mob}/>}
         </main>
       )}
     </div>
