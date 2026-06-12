@@ -5,11 +5,12 @@ import { useState, useEffect, useMemo } from "react";
 const RAW = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/";
 
 async function loadAllData() {
+  const bust = `?t=${Date.now()}`;
   const [teams, matches, stadiums, tables] = await Promise.all([
-    fetch(RAW + "football.teams.json").then(r => r.json()),
-    fetch(RAW + "football.matches.json").then(r => r.json()),
-    fetch(RAW + "football.stadiums.json").then(r => r.json()),
-    fetch(RAW + "football.matchtables.json").then(r => r.json()),
+    fetch(RAW + "football.teams.json"      + bust, {cache:"no-store"}).then(r => r.json()),
+    fetch(RAW + "football.matches.json"    + bust, {cache:"no-store"}).then(r => r.json()),
+    fetch(RAW + "football.stadiums.json"   + bust, {cache:"no-store"}).then(r => r.json()),
+    fetch(RAW + "football.matchtables.json"+ bust, {cache:"no-store"}).then(r => r.json()),
   ]);
   return { teams, matches, stadiums, tables };
 }
@@ -1316,6 +1317,7 @@ export default function App() {
   const [tables,setTables]=useState([]);
   const [st,setSt]=useState("loading");
   const [err,setErr]=useState("");
+  const [lastUpdated,setLastUpdated]=useState(null);
 
   useEffect(()=>{
     const h=()=>setMob(window.innerWidth<768);
@@ -1323,24 +1325,26 @@ export default function App() {
     return()=>window.removeEventListener("resize",h);
   },[]);
 
+  async function fetchData(silent=false) {
+    try {
+      if (!silent) setSt("loading");
+      const {teams,matches:m,stadiums,tables:tb}=await loadAllData();
+      const tm={},sm={};
+      teams.forEach(t=>{tm[t.id]=t;});
+      stadiums.forEach(s=>{sm[s.id]=s;});
+      setTMap(tm); setMatches(m); setSMap(sm); setTables(tb);
+      setSt("live");
+      setLastUpdated(new Date());
+    } catch(e) {
+      setErr(e.message); setSt("error");
+    }
+  }
+
   useEffect(()=>{
-    (async()=>{
-      try {
-        setSt("loading");
-        const {teams,matches:m,stadiums,tables:tb}=await loadAllData();
-        const tm={},sm={};
-        teams.forEach(t=>{tm[t.id]=t;});
-        stadiums.forEach(s=>{sm[s.id]=s;});
-        setTMap(tm);
-        setMatches(m);
-        setSMap(sm);
-        setTables(tb);
-        setSt("live");
-      } catch(e) {
-        setErr(e.message);
-        setSt("error");
-      }
-    })();
+    fetchData();
+    // Re-fetch every 3 min to pick up live API updates on match day
+    const id = setInterval(()=>fetchData(true), 3*60*1000);
+    return()=>clearInterval(id);
   },[]);
 
   const dotColor={live:C.green,error:C.red,loading:C.amber}[st];
