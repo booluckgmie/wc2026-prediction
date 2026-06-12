@@ -588,12 +588,38 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
 
 // ── GROUPS TAB ────────────────────────────────────────────────────────────────
 
-function GroupsTab({tables,tMap,mob}) {
+function GroupsTab({tables,matches,tMap,sMap,mob,scenario="base"}) {
+  // Compute standings: uses real API data when available, otherwise simulates
+  const computed = useMemo(()=>simGroupStage(matches,tMap,sMap,tables,scenario),[matches,tMap,sMap,tables,scenario]);
+
+  // For display: prefer API table row if it has real data (pts or mp > 0),
+  // otherwise fall back to simulated row
+  const apiMap = {};
+  tables.forEach(g => { apiMap[g.group] = {}; g.teams.forEach(t => { apiMap[g.group][t.team_id] = t; }); });
+
+  const groups = Object.entries(computed).sort(([a],[b])=>a.localeCompare(b));
+
   return (
     <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(3,1fr)",gap:10}}>
-      {tables.map(grp=>(
-        <div key={grp.group} style={{background:C.card,borderRadius:8,padding:mob?10:12}}>
-          <div style={{fontWeight:700,fontSize:14,marginBottom:8,color:"#93c5fd"}}>Group {grp.group}</div>
+      {groups.map(([grpKey, simTeams])=>{
+        // Check if API has real standings for this group
+        const apiGroup = apiMap[grpKey]||{};
+        const apiHasData = Object.values(apiGroup).some(t=>t.pts>0||t.mp>0);
+        const displayTeams = apiHasData
+          ? Object.values(apiGroup).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf)
+          : simTeams;
+        const grpMatches = matches.filter(m=>m.type==="group"&&m.group===grpKey);
+        const played = grpMatches.filter(m=>m.finished==="TRUE").length;
+        const total  = grpMatches.length;
+
+        return (
+        <div key={grpKey} style={{background:C.card,borderRadius:8,padding:mob?10:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <span style={{fontWeight:700,fontSize:14,color:"#93c5fd"}}>Group {grpKey}</span>
+            <span style={{fontSize:8,color:apiHasData?C.green:C.blue}}>
+              {apiHasData?`${played}/${total} played`:"Simulated"}
+            </span>
+          </div>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr style={{fontSize:9,color:C.muted}}>
               <td style={{paddingBottom:5}}>#&nbsp;Team</td>
@@ -604,7 +630,7 @@ function GroupsTab({tables,tMap,mob}) {
               <td style={{textAlign:"center",paddingBottom:5}}>GD</td>
               <td style={{textAlign:"center",paddingBottom:5,fontWeight:700,color:C.blue}}>Pts</td>
             </tr></thead>
-            <tbody>{grp.teams.map((e,i)=>{
+            <tbody>{displayTeams.map((e,i)=>{
               const t=tMap[e.team_id];
               const name=t?.name_en||e.team_id;
               return (
@@ -623,7 +649,8 @@ function GroupsTab({tables,tMap,mob}) {
             })}</tbody>
           </table>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1469,7 +1496,7 @@ export default function App() {
       {!loading&&(
         <main style={{flex:1,overflowY:"auto",padding:mob?"10px":"14px 20px",paddingBottom:`calc(16px + env(safe-area-inset-bottom,0px))`}}>
           {tab==="fixtures"  &&<FixturesTab   matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
-          {tab==="groups"    &&<GroupsTab     tables={tables} tMap={tMap} mob={mob}/>}
+          {tab==="groups"    &&<GroupsTab     tables={tables} matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
           {tab==="teams"     &&<TeamsTab      tMap={tMap} mob={mob}/>}
           {tab==="simulate"  &&<SimulateTab   tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
           {tab==="tournament"&&<TournamentTab matches={matches} tMap={tMap} sMap={sMap} tables={tables} mob={mob} scenario={scenario}/>}
