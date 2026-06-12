@@ -282,7 +282,7 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
   const an=away?.name_en||game.away_team_label||"TBD";
   const done=game.finished==="TRUE";
   const live=game.time_elapsed&&game.time_elapsed!=="notstarted"&&!done;
-  const res=!done?calcMatch(hn,an,"UEFA",stadium?.capacity,scenario):null;
+  const res=calcMatch(hn,an,"UEFA",stadium?.capacity,scenario);
   const sc=SCENARIOS[scenario];
 
   return (
@@ -311,17 +311,25 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
             </div>
             {/* Score */}
             <div style={{textAlign:"center",flexShrink:0,minWidth:mob?72:90}}>
-              {done||live?(
-                <div style={{fontSize:mob?28:36,fontWeight:900,color:C.hi,letterSpacing:2,lineHeight:1}}>{game.home_score}–{game.away_score}</div>
+              {done?(
+                <>
+                  <div style={{fontSize:mob?28:36,fontWeight:900,color:C.hi,letterSpacing:2,lineHeight:1}}>{game.home_score}–{game.away_score}</div>
+                  <div style={{fontSize:9,marginTop:3,fontWeight:600,color:C.green}}>Full Time</div>
+                  {res&&<div style={{fontSize:9,marginTop:5,color:C.dim}}>Predicted: <span style={{fontWeight:700,color:"#94a3b8"}}>{res.score}</span></div>}
+                </>
+              ):live?(
+                <>
+                  <div style={{fontSize:mob?28:36,fontWeight:900,color:C.amber,letterSpacing:2,lineHeight:1}}>{game.home_score}–{game.away_score}</div>
+                  <div style={{fontSize:9,marginTop:3,fontWeight:600,color:C.amber}}>{game.time_elapsed}'</div>
+                </>
               ):res?(
-                <div style={{fontSize:mob?24:30,fontWeight:900,color:"#334155",letterSpacing:2,lineHeight:1}}>{res.score}</div>
+                <>
+                  <div style={{fontSize:mob?24:30,fontWeight:900,color:"#fff",letterSpacing:2,lineHeight:1}}>{res.score}</div>
+                  <div style={{fontSize:9,marginTop:3,fontWeight:600,color:C.blue}}>Predicted</div>
+                </>
               ):(
                 <div style={{fontSize:mob?20:24,color:C.muted}}>vs</div>
               )}
-              <div style={{fontSize:9,marginTop:4,fontWeight:600,
-                color:done?C.green:live?C.amber:C.blue}}>
-                {done?"Full Time":live?`${game.time_elapsed}'`:"Predicted"}
-              </div>
               {game.local_date&&<div style={{fontSize:9,color:C.muted,marginTop:2}}>{fmtDate(game.local_date)}</div>}
             </div>
             {/* Away */}
@@ -341,11 +349,11 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
           )}
         </div>
 
-        {/* Prediction */}
-        {res&&!done&&(
+        {/* Prediction / Post-match analysis */}
+        {res&&(
           <div style={{background:C.card,borderRadius:8,padding:10,marginBottom:12}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-              <span style={{fontSize:10,color:C.muted,fontWeight:600}}>PREDICTION</span>
+              <span style={{fontSize:10,color:C.muted,fontWeight:600}}>{done?"PRE-MATCH PREDICTION":"PREDICTION"}</span>
               <span style={{fontSize:9,background:sc.col,color:"#fff",borderRadius:10,padding:"2px 8px",fontWeight:700}}>{sc.icon} {sc.label}</span>
               <span style={{fontSize:9,color:C.dim}}>{sc.desc}</span>
             </div>
@@ -354,6 +362,11 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
               <span>Home {res.W.toFixed(0)}%</span><span>Draw {res.D.toFixed(0)}%</span><span>Away {res.L.toFixed(0)}%</span>
             </div>
             <div style={{marginTop:10}}><ScoreGrid mat={res.mat} hn={hn} an={an} hXg={res.hXg} aXg={res.aXg}/></div>
+            {done&&(
+              <div style={{marginTop:8,padding:"5px 8px",background:C.deep,borderRadius:6,fontSize:9,color:C.dim}}>
+                ℹ Actual result: <strong style={{color:C.hi}}>{hn} {game.home_score}–{game.away_score} {an}</strong>
+              </div>
+            )}
           </div>
         )}
 
@@ -505,7 +518,7 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
             const an=away?.name_en||g.away_team_label||"TBD";
             const done=g.finished==="TRUE";
             const live=g.time_elapsed&&g.time_elapsed!=="notstarted"&&!done;
-            const res=!done&&!live?calcMatch(hn,an,"UEFA",sMap[g.stadium_id]?.capacity,scenario):null;
+            const res=!live?calcMatch(hn,an,"UEFA",sMap[g.stadium_id]?.capacity,scenario):null;
 
             const isHome=teamFilter&&g.home_team_id===teamFilter.id;
             const isAway=teamFilter&&g.away_team_id===teamFilter.id;
@@ -533,10 +546,17 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
                     <FlagImg url={home?.flag} name={hn} size={isHome?20:16}/>
                   </div>
                   <div style={{textAlign:"center",flexShrink:0,minWidth:44}}>
-                    {done||live?(
-                      <div style={{fontSize:mob?16:18,fontWeight:900,color:done?C.hi:C.amber}}>
-                        {g.home_score}–{g.away_score}
-                      </div>
+                    {done?(
+                      <>
+                        <div style={{fontSize:mob?16:18,fontWeight:900,color:C.hi}}>{g.home_score}–{g.away_score}</div>
+                        <div style={{fontSize:8,color:C.green,fontWeight:600}}>Full Time</div>
+                        {res&&<div style={{fontSize:8,color:C.dim,marginTop:2}}>pred {res.score}</div>}
+                      </>
+                    ):live?(
+                      <>
+                        <div style={{fontSize:mob?16:18,fontWeight:900,color:C.amber}}>{g.home_score}–{g.away_score}</div>
+                        <div style={{fontSize:8,color:C.amber,fontWeight:600}}>LIVE {g.time_elapsed}'</div>
+                      </>
                     ):(
                       <>
                         <div style={{fontSize:mob?18:22,fontWeight:900,color:"#fff",letterSpacing:1}}>{res?.score||"–"}</div>
@@ -555,8 +575,7 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
                 </div>
 
                 {/* Odds or status */}
-                {res&&<div style={{marginTop:5}}><WinBar W={res.W} D={res.D} L={res.L}/></div>}
-                {done&&<div style={{marginTop:4,textAlign:"center"}}><span style={{fontSize:9,color:C.green,background:"#22c55e11",borderRadius:8,padding:"1px 7px"}}>Full Time</span></div>}
+                {!done&&res&&<div style={{marginTop:5}}><WinBar W={res.W} D={res.D} L={res.L}/></div>}
                 {live&&<div style={{marginTop:4,textAlign:"center"}}><span style={{fontSize:9,color:C.amber,background:"#f59e0b11",borderRadius:8,padding:"1px 7px"}}>LIVE {g.time_elapsed}'</span></div>}
               </div>
             );
@@ -812,6 +831,23 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
   tables.forEach(g => {
     if (!st[g.group]) st[g.group] = {};
     g.teams.forEach(t => { st[g.group][t.team_id] = {...t}; });
+  });
+
+  // Apply actual finished match scores directly — more reliable than API tables
+  matches.filter(m => m.type==="group" && m.finished==="TRUE" && m.home_score!=null && m.away_score!=null).forEach(m => {
+    const grp = m.group; if (!grp || !st[grp]) return;
+    const hid = m.home_team_id, aid = m.away_team_id;
+    if (!hid || !aid) return;
+    const hg = +m.home_score, ag = +m.away_score;
+    // Only apply if API table looks stale (all pts = 0 for this group)
+    const allZero = Object.values(st[grp]).every(t => t.pts === 0 && t.mp === 0);
+    if (!allZero) return; // trust the API tables
+    const upd = (tid, gf, ga) => {
+      const e = st[grp]?.[tid]; if (!e) return;
+      e.mp++; e.gf+=gf; e.ga+=ga; e.gd=e.gf-e.ga;
+      if (gf>ga){e.w++;e.pts+=3;} else if(gf===ga){e.d++;e.pts+=1;} else e.l++;
+    };
+    upd(hid, hg, ag); upd(aid, ag, hg);
   });
 
   // Add simulated result for every unplayed group match
