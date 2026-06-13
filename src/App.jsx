@@ -158,16 +158,23 @@ const ROLES = [
 
 function poisson(λ, k) { let p=Math.exp(-λ); for(let i=1;i<=k;i++) p*=λ/i; return p; }
 
+// Map API team names → PROFILE keys where they differ
+const TEAM_ALIAS = {
+  "Turkey":                           "Turkiye",
+  "Democratic Republic of the Congo": "Congo DR",
+};
+function profileName(n) { return TEAM_ALIAS[n] || n; }
+
 function calcMatch(hn, an, refC="UEFA", cap=70000, scenario="base") {
-  const h=PROFILE[hn], a=PROFILE[an];
+  const h=PROFILE[profileName(hn)], a=PROFILE[profileName(an)];
   if (!h||!a) return null;
   const sc = SCENARIOS[scenario] || SCENARIOS.base;
   const capB = cap>80000?1.03:1.0;
   const rb   = REF_BIAS[refC]||{};
   const pw   = x=>(x.k*.20+x.q*.20+x.ro*.15+x.b*.15+x.kn*.15+x.p*.15)/100;
   // Base xG first, then apply scenario scale directly
-  let hXg = h.xgOff*(1-a.xgDef/3)*capB*(1+(rb[CONF[hn]]||0))*(0.85+pw(h.r)*.3) * sc.hScale;
-  let aXg = a.xgOff*(1-h.xgDef/3)     *(1+(rb[CONF[an]]||0))*(0.85+pw(a.r)*.3) * sc.aScale;
+  let hXg = h.xgOff*(1-a.xgDef/3)*capB*(1+(rb[CONF[profileName(hn)]]||0))*(0.85+pw(h.r)*.3) * sc.hScale;
+  let aXg = a.xgOff*(1-h.xgDef/3)     *(1+(rb[CONF[profileName(an)]]||0))*(0.85+pw(a.r)*.3) * sc.aScale;
   hXg=Math.max(0.05,hXg); aXg=Math.max(0.05,aXg);
   const mat=[]; let W=0,D=0,L=0;
   for(let i=0;i<=5;i++){mat[i]=[];for(let j=0;j<=5;j++){
