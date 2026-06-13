@@ -889,7 +889,7 @@ const GUIDE_EXAMPLE = (()=>{
 function simGroupStage(matches, tMap, sMap, tables, scenario) {
   const st = {};
 
-  // Seed from match data first (works even when tables API returns all zeros)
+  // 1. Seed every team in every group with blank stats
   matches.filter(m => m.type==="group").forEach(m => {
     if (!m.group) return;
     if (!st[m.group]) st[m.group] = {};
@@ -899,30 +899,42 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
     });
   });
 
-  // Overlay real standings from API (may be all zeros before tournament starts)
+  // 2. Determine per-group whether the official API table has real data
+  const apiHasData = {};
   tables.forEach(g => {
-    if (!st[g.group]) st[g.group] = {};
-    g.teams.forEach(t => { st[g.group][t.team_id] = {...t}; });
+    apiHasData[g.group] = g.teams.some(t => t.pts > 0 || t.mp > 0);
   });
 
-  // Apply actual finished match scores directly — more reliable than API tables
-  matches.filter(m => m.type==="group" && m.finished==="TRUE" && m.home_score!=null && m.away_score!=null).forEach(m => {
-    const grp = m.group; if (!grp || !st[grp]) return;
-    const hid = m.home_team_id, aid = m.away_team_id;
-    if (!hid || !aid) return;
-    const hg = +m.home_score, ag = +m.away_score;
-    // Only apply if API table looks stale (all pts = 0 for this group)
-    const allZero = Object.values(st[grp]).every(t => t.pts === 0 && t.mp === 0);
-    if (!allZero) return; // trust the API tables
-    const upd = (tid, gf, ga) => {
-      const e = st[grp]?.[tid]; if (!e) return;
-      e.mp++; e.gf+=gf; e.ga+=ga; e.gd=e.gf-e.ga;
-      if (gf>ga){e.w++;e.pts+=3;} else if(gf===ga){e.d++;e.pts+=1;} else e.l++;
-    };
-    upd(hid, hg, ag); upd(aid, ag, hg);
+  // 3a. If official API has data for a group, use it directly
+  tables.forEach(g => {
+    if (apiHasData[g.group]) {
+      if (!st[g.group]) st[g.group] = {};
+      g.teams.forEach(t => { st[g.group][t.team_id] = {...t}; });
+    }
   });
 
-  // Add simulated result for every unplayed group match
+  // 3b. For groups where API is stale (all zeros), apply real finished match
+  //     scores from the matches array (which has openfootball results merged in).
+  //     Check allZero ONCE per group before the loop so multiple matches in the
+  //     same group all get applied (fixes the previous per-match check bug).
+  const staleGroups = new Set(
+    Object.keys(st).filter(g => !apiHasData[g])
+  );
+  const upd = (grp, tid, gf, ga) => {
+    const e = st[grp]?.[tid]; if (!e) return;
+    e.mp++; e.gf+=gf; e.ga+=ga; e.gd=e.gf-e.ga;
+    if (gf>ga){e.w++;e.pts+=3;} else if(gf===ga){e.d++;e.pts+=1;} else e.l++;
+  };
+  matches.filter(m =>
+    m.type==="group" && m.finished==="TRUE" &&
+    m.home_score!=null && m.away_score!=null &&
+    staleGroups.has(m.group)
+  ).forEach(m => {
+    upd(m.group, m.home_team_id, +m.home_score, +m.away_score);
+    upd(m.group, m.away_team_id, +m.away_score, +m.home_score);
+  });
+
+  // 4. Simulate every unplayed match to complete the standings
   matches.filter(m => m.type==="group" && m.finished!=="TRUE").forEach(m => {
     const grp = m.group;
     if (!grp || !st[grp]) return;
@@ -941,13 +953,8 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
       hg = ag = Math.max(Math.round((res.hXg+res.aXg)/2), 0);
     }
     hg = Math.max(hg,0); ag = Math.max(ag,0);
-    const upd = (tid, gf, ga) => {
-      const e = st[grp]?.[tid]; if (!e) return;
-      e.mp++; e.gf+=gf; e.ga+=ga; e.gd=e.gf-e.ga;
-      if (gf>ga){e.w++;e.pts+=3;} else if(gf===ga){e.d++;e.pts+=1;} else e.l++;
-    };
-    upd(m.home_team_id, hg, ag);
-    upd(m.away_team_id, ag, hg);
+    upd(grp, m.home_team_id, hg, ag);
+    upd(grp, m.away_team_id, ag, hg);
   });
 
   const sorted = {};
