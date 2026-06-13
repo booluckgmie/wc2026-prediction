@@ -186,6 +186,33 @@ function calcMatch(hn, an, refC="UEFA", cap=70000, scenario="base") {
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 
+// UTC offsets per stadium for June 2026 (DST applied for US/Canada)
+// Mexico removed DST in 2022 → permanent CST/MST
+const STADIUM_UTC = {
+  "1":-6,"2":-6,"3":-6,           // Mexico City, Guadalajara, Monterrey (CST, no DST)
+  "4":-5,"5":-5,"6":-5,           // Dallas, Houston, Kansas City (US CDT)
+  "7":-4,"8":-4,"9":-4,           // Atlanta, Miami, Boston (EDT)
+  "10":-4,"11":-4,"12":-4,        // Philadelphia, NY/NJ, Toronto (EDT)
+  "13":-7,"14":-7,"15":-7,"16":-7,// Vancouver, Seattle, San Francisco, LA (PDT)
+};
+
+function toMYT(localDateStr, stadiumId) {
+  // localDateStr: "MM/DD/YYYY HH:MM"
+  const m = localDateStr?.match(/(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+)/);
+  if (!m) return null;
+  const utcOffset = STADIUM_UTC[String(stadiumId)] ?? -5; // fallback CDT
+  const utcH = +m[4] - utcOffset; // local → UTC
+  const mytH = utcH + 8;          // UTC → MYT (+8)
+  // Handle day rollover
+  const dayAdd = mytH >= 24 ? 1 : mytH < 0 ? -1 : 0;
+  const h = ((mytH % 24) + 24) % 24;
+  const hh = String(h).padStart(2,"0");
+  const mm = m[5];
+  const months=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let day = +m[2] + dayAdd;
+  return `${months[+m[1]]} ${day} · ${hh}:${mm} MYT`;
+}
+
 function fmtDate(s="") {
   // "06/11/2026 13:00" → "Jun 11 · 13:00"
   const m=s.match(/(\d+)\/(\d+)\/(\d+)\s+(\d+:\d+)/);
@@ -425,7 +452,7 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
         {/* Venue */}
         {stadium&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:12}}>
-            {[["🏟",stadium.fifa_name||stadium.name_en],["📍",`${stadium.city_en}, ${stadium.country_en}`],["👥",`${(stadium.capacity/1000).toFixed(0)}k capacity`],["🗓",game.local_date||"–"]].map(([ic,v],i)=>(
+            {[["🏟",stadium.fifa_name||stadium.name_en],["📍",`${stadium.city_en}, ${stadium.country_en}`],["👥",`${(stadium.capacity/1000).toFixed(0)}k capacity`],["🇲🇾",toMYT(game.local_date,game.stadium_id)||game.local_date||"–"]].map(([ic,v],i)=>(
               <div key={i} style={{background:C.deep,borderRadius:6,padding:"6px 8px",fontSize:10,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ic} {v}</div>
             ))}
           </div>
@@ -583,8 +610,13 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
 
                 {/* Meta row */}
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:9,color:C.muted}}>
-                  <span>{fmtDate(g.local_date)}</span>
-                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:mob?90:160}}>{sMap[g.stadium_id]?.city_en||""}</span>
+                  <span style={{display:"flex",flexDirection:"column",gap:1}}>
+                    <span>{fmtDate(g.local_date)}</span>
+                    {toMYT(g.local_date,g.stadium_id)&&(
+                      <span style={{color:"#f59e0b",fontWeight:600}}>{toMYT(g.local_date,g.stadium_id)}</span>
+                    )}
+                  </span>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:mob?80:140,textAlign:"right"}}>{sMap[g.stadium_id]?.city_en||""}</span>
                 </div>
 
                 {/* Teams + score */}
