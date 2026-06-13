@@ -1,17 +1,62 @@
 import { useState, useEffect, useMemo } from "react";
 
-// ── DATA SOURCE — raw JSON from GitHub (public, no auth, no CORS) ─────────────
+// ── DATA SOURCES ──────────────────────────────────────────────────────────────
 
 const RAW = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/";
+const OFB = "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json";
+
+// Normalize team names between openfootball and the base API
+const OFB_NAME = {
+  "USA":                    "United States",
+  "Bosnia & Herzegovina":   "Bosnia and Herzegovina",
+  "DR Congo":               "Democratic Republic of the Congo",
+  "Turkey":                 "Turkiye",
+  "Czechia":                "Czech Republic",
+  "Czech Republic":         "Czech Republic",
+};
+function normName(n) { return OFB_NAME[n] || n; }
 
 async function loadAllData() {
   const bust = `?t=${Date.now()}`;
-  const [teams, matches, stadiums, tables] = await Promise.all([
+  const [teams, matches, stadiums, tables, ofbRaw] = await Promise.all([
     fetch(RAW + "football.teams.json"      + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matches.json"    + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.stadiums.json"   + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matchtables.json"+ bust, {cache:"no-store"}).then(r => r.json()),
+    fetch(OFB + bust, {cache:"no-store"}).then(r => r.json()).catch(()=>({matches:[]})),
   ]);
+
+  // Build name→id lookup from teams
+  const nameToId = {};
+  teams.forEach(t => { nameToId[t.name_en] = t.id; });
+
+  // Merge openfootball real scores into matches array
+  const ofbPlayed = (ofbRaw.matches||[]).filter(m => m.score?.ft);
+  if (ofbPlayed.length > 0) {
+    // Build a fast lookup: "homeId_awayId" → match index
+    const matchIdx = {};
+    matches.forEach((m, i) => { matchIdx[`${m.home_team_id}_${m.away_team_id}`] = i; });
+
+    ofbPlayed.forEach(om => {
+      const hName = normName(om.team1);
+      const aName = normName(om.team2);
+      const hId = nameToId[hName];
+      const aId = nameToId[aName];
+      if (!hId || !aId) return;
+      const key = `${hId}_${aId}`;
+      const idx = matchIdx[key];
+      if (idx == null) return;
+      matches[idx] = {
+        ...matches[idx],
+        finished:    "TRUE",
+        home_score:  String(om.score.ft[0]),
+        away_score:  String(om.score.ft[1]),
+        home_scorers: (om.goals1||[]).map(g=>`${g.name} ${g.minute}'`).join(", ") || "null",
+        away_scorers: (om.goals2||[]).map(g=>`${g.name} ${g.minute}'`).join(", ") || "null",
+      };
+    });
+  }
+
   return { teams, matches, stadiums, tables };
 }
 
