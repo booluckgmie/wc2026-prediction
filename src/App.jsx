@@ -10,23 +10,34 @@ const WC26_API = "https://worldcup26.ir/get/games";
 // openfootball — community-maintained, updated within hours of each result
 const OFB_URL = "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json";
 
-// Normalize team names between sources and our PROFILE/team map
-const OFB_NAME = {
-  "USA":                              "United States",
-  "Bosnia & Herzegovina":             "Bosnia and Herzegovina",
-  "DR Congo":                         "Democratic Republic of the Congo",
-  "Democratic Republic of the Congo": "Democratic Republic of the Congo",
-  "Turkey":                           "Turkiye",
-  "Türkiye":                          "Turkiye",
-  "Czechia":                          "Czech Republic",
-  "Czech Republic":                   "Czech Republic",
-  "Ivory Coast":                      "Ivory Coast",
-  "Côte d'Ivoire":                    "Ivory Coast",
+// ESPN unofficial soccer API — no API key, updates in near real-time, works from browser
+const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard";
+
+// Unified name normalisation for all three external sources
+const NAME_MAP = {
+  // openfootball
+  "USA":                                  "United States",
+  "Bosnia & Herzegovina":                 "Bosnia and Herzegovina",
+  "DR Congo":                             "Democratic Republic of the Congo",
+  "Czechia":                              "Czech Republic",
+  "Ivory Coast":                          "Ivory Coast",
+  "Côte d'Ivoire":                        "Ivory Coast",
+  // various sources use different Turkey spellings
+  "Turkey":                               "Turkiye",
+  "Türkiye":                              "Turkiye",
+  // ESPN / worldcup26.ir extras
+  "Democratic Republic of the Congo":     "Democratic Republic of the Congo",
+  "Czech Republic":                       "Czech Republic",
+  "Bosnia and Herzegovina":               "Bosnia and Herzegovina",
+  "United States":                        "United States",
+  // ESPN sometimes appends "Men's" or uses short names
+  "South Korea":                          "South Korea",
+  "Korea Republic":                       "South Korea",
+  "Republic of Ireland":                  "Republic of Ireland",
 };
-function normName(n) { return OFB_NAME[n] || n; }
+function normName(n) { return NAME_MAP[n?.trim()] || n?.trim() || ""; }
 
 async function fetchOFB() {
-  // Append timestamp AND random salt to defeat every CDN cache layer
   const bust = `?t=${Date.now()}&r=${Math.random().toString(36).slice(2)}`;
   try {
     const d = await fetch(OFB_URL + bust, {cache:"no-store"}).then(r => r.json());
@@ -43,15 +54,46 @@ async function fetchWC26() {
   } catch { return []; }
 }
 
+// Fetch ESPN scoreboard for yesterday + today + tomorrow to catch just-finished matches
+async function fetchESPN() {
+  const now = new Date();
+  const days = [-1, 0, 1].map(offset => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + offset);
+    return d.toISOString().slice(0, 10).replace(/-/g, "");
+  });
+  const results = [];
+  await Promise.all(days.map(async date => {
+    try {
+      const data = await fetch(`${ESPN_BASE}?dates=${date}`, {cache:"no-store"}).then(r => r.json());
+      (data.events || []).forEach(ev => {
+        const comp = ev.competitions?.[0];
+        if (!comp?.status?.type?.completed) return;
+        const home = comp.competitors?.find(c => c.homeAway === "home");
+        const away = comp.competitors?.find(c => c.homeAway === "away");
+        if (!home || !away) return;
+        results.push({
+          team1:  normName(home.team?.displayName || ""),
+          team2:  normName(away.team?.displayName || ""),
+          score1: parseInt(home.score || "0", 10),
+          score2: parseInt(away.score || "0", 10),
+        });
+      });
+    } catch { /* ESPN may be blocked or unavailable */ }
+  }));
+  return results;
+}
+
 async function loadAllData() {
   const bust = `?t=${Date.now()}`;
-  const [teams, matches, stadiums, tables, ofbRaw, wc26Games] = await Promise.all([
+  const [teams, matches, stadiums, tables, ofbRaw, wc26Games, espnGames] = await Promise.all([
     fetch(RAW + "football.teams.json"      + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matches.json"    + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.stadiums.json"   + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matchtables.json"+ bust, {cache:"no-store"}).then(r => r.json()),
     fetchOFB(),
     fetchWC26(),
+    fetchESPN(),
   ]);
 
   // Build fast lookups
@@ -76,26 +118,31 @@ async function loadAllData() {
     return true;
   }
 
-  // 1. Merge worldcup26.ir live results
-  //    API stores MongoDB ObjectIds in home_team_id — match by name instead
-  wc26Games.filter(m => m.finished==="TRUE" || m.finished===true).forEach(m => {
-    const hName = normName(m.home_team_name_en || "");
-    const aName = normName(m.away_team_name_en || "");
-    const hId = nameToId[hName];
-    const aId = nameToId[aName];
-    if (hId && aId) {
-      applyResult(hId, aId, m.home_score, m.away_score, m.home_scorers, m.away_scorers);
-    }
+  // 1. ESPN — fastest updater, priority source
+  espnGames.forEach(eg => {
+    const hId = nameToId[eg.team1];
+    const aId = nameToId[eg.team2];
+    if (hId && aId) applyResult(hId, aId, eg.score1, eg.score2);
   });
 
-  // 2. Also merge openfootball (fills gaps when worldcup26.ir is unreachable)
+  // 2. worldcup26.ir — live REST API, fills gaps (works from user browser)
+  wc26Games.filter(m => m.finished==="TRUE" || m.finished===true).forEach(m => {
+    const hId = nameToId[normName(m.home_team_name_en || "")];
+    const aId = nameToId[normName(m.away_team_name_en || "")];
+    if (!hId || !aId) return;
+    const cur = matches[matchIdx[`${hId}_${aId}`]];
+    if (cur?.finished==="TRUE") return;
+    applyResult(hId, aId, m.home_score, m.away_score, m.home_scorers, m.away_scorers);
+  });
+
+  // 3. openfootball — community-maintained, most reliable fallback
   const ofbPlayed = (ofbRaw.matches||[]).filter(m => m.score?.ft);
   ofbPlayed.forEach(om => {
     const hId = nameToId[normName(om.team1)];
     const aId = nameToId[normName(om.team2)];
     if (!hId || !aId) return;
     const cur = matches[matchIdx[`${hId}_${aId}`]];
-    if (cur?.finished==="TRUE") return; // worldcup26.ir already applied
+    if (cur?.finished==="TRUE") return;
     applyResult(hId, aId,
       om.score.ft[0], om.score.ft[1],
       (om.goals1||[]).map(g=>`${g.name} ${g.minute}'`).join(", ")||"null",
