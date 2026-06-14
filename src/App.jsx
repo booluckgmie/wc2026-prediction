@@ -3,7 +3,12 @@ import { useState, useEffect, useMemo } from "react";
 // ── DATA SOURCES ──────────────────────────────────────────────────────────────
 
 const RAW = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/";
-const OFB = "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json";
+
+// openfootball CDN mirrors — tried in parallel, best (most results) wins
+const OFB_MIRRORS = [
+  "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json",
+  "https://rawcdn.githack.com/openfootball/world-cup.json/master/2026/worldcup.json",
+];
 
 // Normalize team names between openfootball and the base API
 const OFB_NAME = {
@@ -13,8 +18,27 @@ const OFB_NAME = {
   "Turkey":                 "Turkiye",
   "Czechia":                "Czech Republic",
   "Czech Republic":         "Czech Republic",
+  "Türkiye":                "Turkiye",
 };
 function normName(n) { return OFB_NAME[n] || n; }
+
+async function fetchOFB() {
+  const bust = `?t=${Date.now()}`;
+  // Race all mirrors; pick the response that has the most played matches
+  const results = await Promise.allSettled(
+    OFB_MIRRORS.map(url =>
+      fetch(url + bust, {cache:"no-store"})
+        .then(r => r.json())
+        .then(d => ({matches: (d.matches||[]).filter(m => m.score?.ft), raw: d}))
+        .catch(() => ({matches:[], raw:{matches:[]}}))
+    )
+  );
+  // Return the mirror with the most played matches
+  return results
+    .filter(r => r.status==="fulfilled")
+    .map(r => r.value)
+    .sort((a,b) => b.matches.length - a.matches.length)[0]?.raw || {matches:[]};
+}
 
 async function loadAllData() {
   const bust = `?t=${Date.now()}`;
@@ -23,7 +47,7 @@ async function loadAllData() {
     fetch(RAW + "football.matches.json"    + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.stadiums.json"   + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matchtables.json"+ bust, {cache:"no-store"}).then(r => r.json()),
-    fetch(OFB + bust, {cache:"no-store"}).then(r => r.json()).catch(()=>({matches:[]})),
+    fetchOFB(),
   ]);
 
   // Build name→id lookup from teams
@@ -1497,7 +1521,7 @@ export default function App() {
   useEffect(()=>{
     fetchData();
     // Re-fetch every 3 min to pick up live API updates on match day
-    const id = setInterval(()=>fetchData(true), 3*60*1000);
+    const id = setInterval(()=>fetchData(true), 60*1000); // every 1 min — picks up openfootball updates faster
     return()=>clearInterval(id);
   },[]);
 
