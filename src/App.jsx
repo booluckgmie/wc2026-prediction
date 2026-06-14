@@ -16,13 +16,16 @@ const OFB_MIRRORS = [
 
 // Normalize team names between sources and our PROFILE/team map
 const OFB_NAME = {
-  "USA":                    "United States",
-  "Bosnia & Herzegovina":   "Bosnia and Herzegovina",
-  "DR Congo":               "Democratic Republic of the Congo",
-  "Turkey":                 "Turkiye",
-  "Czechia":                "Czech Republic",
-  "Czech Republic":         "Czech Republic",
-  "Türkiye":                "Turkiye",
+  "USA":                              "United States",
+  "Bosnia & Herzegovina":             "Bosnia and Herzegovina",
+  "DR Congo":                         "Democratic Republic of the Congo",
+  "Democratic Republic of the Congo": "Democratic Republic of the Congo",
+  "Turkey":                           "Turkiye",
+  "Türkiye":                          "Turkiye",
+  "Czechia":                          "Czech Republic",
+  "Czech Republic":                   "Czech Republic",
+  "Ivory Coast":                      "Ivory Coast",
+  "Côte d'Ivoire":                    "Ivory Coast",
 };
 function normName(n) { return OFB_NAME[n] || n; }
 
@@ -47,8 +50,10 @@ async function fetchWC26() {
   const bust = `?t=${Date.now()}`;
   try {
     const data = await fetch(WC26_API + bust, {cache:"no-store"}).then(r => r.json());
-    // API returns array of match objects; field names mirror the rezarahiminia schema
-    return Array.isArray(data) ? data : (data.data || data.matches || data.games || []);
+    // API returns { games: [...] } — each game has home_team_name_en / away_team_name_en
+    // home_team_id is a MongoDB ObjectId (not the simple "1","2" we use), so match by name
+    const arr = Array.isArray(data) ? data : (data.games || data.data || data.matches || []);
+    return arr;
   } catch { return []; }
 }
 
@@ -73,7 +78,7 @@ async function loadAllData() {
   function applyResult(hId, aId, hScore, aScore, scorers1="null", scorers2="null") {
     const key = `${hId}_${aId}`;
     const idx = matchIdx[key];
-    if (idx == null) return;
+    if (idx == null) return false;
     matches[idx] = {
       ...matches[idx],
       finished:     "TRUE",
@@ -82,23 +87,29 @@ async function loadAllData() {
       home_scorers: scorers1||"null",
       away_scorers: scorers2||"null",
     };
+    return true;
   }
 
-  // 1. Merge worldcup26.ir live results (same schema as rezarahiminia, most up-to-date)
+  // 1. Merge worldcup26.ir live results
+  //    API stores MongoDB ObjectIds in home_team_id — match by name instead
   wc26Games.filter(m => m.finished==="TRUE" || m.finished===true).forEach(m => {
-    applyResult(m.home_team_id, m.away_team_id, m.home_score, m.away_score,
-      m.home_scorers, m.away_scorers);
+    const hName = normName(m.home_team_name_en || "");
+    const aName = normName(m.away_team_name_en || "");
+    const hId = nameToId[hName];
+    const aId = nameToId[aName];
+    if (hId && aId) {
+      applyResult(hId, aId, m.home_score, m.away_score, m.home_scorers, m.away_scorers);
+    }
   });
 
-  // 2. Also merge openfootball (fallback for any gaps worldcup26.ir may have)
+  // 2. Also merge openfootball (fills gaps when worldcup26.ir is unreachable)
   const ofbPlayed = (ofbRaw.matches||[]).filter(m => m.score?.ft);
   ofbPlayed.forEach(om => {
     const hId = nameToId[normName(om.team1)];
     const aId = nameToId[normName(om.team2)];
     if (!hId || !aId) return;
-    // Only apply if worldcup26.ir hasn't already marked it finished
     const cur = matches[matchIdx[`${hId}_${aId}`]];
-    if (cur?.finished==="TRUE") return;
+    if (cur?.finished==="TRUE") return; // worldcup26.ir already applied
     applyResult(hId, aId,
       om.score.ft[0], om.score.ft[1],
       (om.goals1||[]).map(g=>`${g.name} ${g.minute}'`).join(", ")||"null",
