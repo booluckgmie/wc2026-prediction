@@ -4,15 +4,11 @@ import { useState, useEffect, useMemo } from "react";
 
 const RAW = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/";
 
-// worldcup26.ir — the live REST API behind the rezarahiminia repo
-// Runs from the user's browser (no server-side restrictions)
+// worldcup26.ir — live REST API (runs from user's browser, may be geo-restricted)
 const WC26_API = "https://worldcup26.ir/get/games";
 
-// openfootball CDN mirrors — tried in parallel, best (most results) wins
-const OFB_MIRRORS = [
-  "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json",
-  "https://rawcdn.githack.com/openfootball/world-cup.json/master/2026/worldcup.json",
-];
+// openfootball — community-maintained, updated within hours of each result
+const OFB_URL = "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json";
 
 // Normalize team names between sources and our PROFILE/team map
 const OFB_NAME = {
@@ -30,30 +26,20 @@ const OFB_NAME = {
 function normName(n) { return OFB_NAME[n] || n; }
 
 async function fetchOFB() {
-  const bust = `?t=${Date.now()}`;
-  const results = await Promise.allSettled(
-    OFB_MIRRORS.map(url =>
-      fetch(url + bust, {cache:"no-store"})
-        .then(r => r.json())
-        .then(d => ({matches: (d.matches||[]).filter(m => m.score?.ft), raw: d}))
-        .catch(() => ({matches:[], raw:{matches:[]}}))
-    )
-  );
-  return results
-    .filter(r => r.status==="fulfilled")
-    .map(r => r.value)
-    .sort((a,b) => b.matches.length - a.matches.length)[0]?.raw || {matches:[]};
+  // Append timestamp AND random salt to defeat every CDN cache layer
+  const bust = `?t=${Date.now()}&r=${Math.random().toString(36).slice(2)}`;
+  try {
+    const d = await fetch(OFB_URL + bust, {cache:"no-store"}).then(r => r.json());
+    return d;
+  } catch { return {matches:[]}; }
 }
 
-// Fetch worldcup26.ir live API and normalise into the same shape as rezarahiminia matches
+// Fetch worldcup26.ir — { games: [...] } with home_team_name_en / away_team_name_en
 async function fetchWC26() {
-  const bust = `?t=${Date.now()}`;
+  const bust = `?t=${Date.now()}&r=${Math.random().toString(36).slice(2)}`;
   try {
     const data = await fetch(WC26_API + bust, {cache:"no-store"}).then(r => r.json());
-    // API returns { games: [...] } — each game has home_team_name_en / away_team_name_en
-    // home_team_id is a MongoDB ObjectId (not the simple "1","2" we use), so match by name
-    const arr = Array.isArray(data) ? data : (data.games || data.data || data.matches || []);
-    return arr;
+    return Array.isArray(data) ? data : (data.games || data.data || data.matches || []);
   } catch { return []; }
 }
 
