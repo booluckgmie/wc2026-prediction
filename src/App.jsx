@@ -150,7 +150,13 @@ async function loadAllData() {
     );
   });
 
-  return { teams, matches, stadiums, tables };
+  const sourcesActive = [
+    espnGames.length > 0 ? "ESPN" : null,
+    wc26Games.length > 0 ? "WC26" : null,
+    ofbPlayed.length > 0 ? "OFB" : null,
+  ].filter(Boolean);
+
+  return { teams, matches, stadiums, tables, sourcesActive };
 }
 
 // ── STATIC PROFILE DATA (xG + position ratings for Poisson simulation) ────────
@@ -1565,6 +1571,7 @@ export default function App() {
   const [st,setSt]=useState("loading");
   const [err,setErr]=useState("");
   const [lastUpdated,setLastUpdated]=useState(null);
+  const [sources,setSources]=useState([]);
 
   useEffect(()=>{
     const h=()=>setMob(window.innerWidth<768);
@@ -1575,11 +1582,12 @@ export default function App() {
   async function fetchData(silent=false) {
     try {
       if (!silent) setSt("loading");
-      const {teams,matches:m,stadiums,tables:tb}=await loadAllData();
+      const {teams,matches:m,stadiums,tables:tb,sourcesActive}=await loadAllData();
       const tm={},sm={};
       teams.forEach(t=>{tm[t.id]=t;});
       stadiums.forEach(s=>{sm[s.id]=s;});
       setTMap(tm); setMatches(m); setSMap(sm); setTables(tb);
+      setSources(sourcesActive||[]);
       setSt("live");
       setLastUpdated(new Date());
     } catch(e) {
@@ -1615,7 +1623,11 @@ export default function App() {
           <span style={{fontSize:mob?20:22,flexShrink:0}}>⚽</span>
           <div style={{minWidth:0}}>
             <div style={{fontSize:mob?14:17,fontWeight:800,letterSpacing:-.5,color:C.hi,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>WC 2026 Analytics</div>
-            <div style={{fontSize:9,color:C.muted}}>FIFA World Cup · 48 Teams · 104 Matches</div>
+            <div style={{fontSize:9,color:C.muted}}>
+              {lastUpdated
+                ? `Updated ${lastUpdated.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})} MYT · Sources: ${sources.length?sources.join(" · "):"loading"}`
+                : "FIFA World Cup · 48 Teams · 104 Matches"}
+            </div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
