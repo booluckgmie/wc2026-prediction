@@ -4,13 +4,17 @@ import { useState, useEffect, useMemo } from "react";
 
 const RAW = "https://raw.githubusercontent.com/rezarahiminia/worldcup2026/main/";
 
+// worldcup26.ir — the live REST API behind the rezarahiminia repo
+// Runs from the user's browser (no server-side restrictions)
+const WC26_API = "https://worldcup26.ir/get/games";
+
 // openfootball CDN mirrors — tried in parallel, best (most results) wins
 const OFB_MIRRORS = [
   "https://raw.githubusercontent.com/openfootball/world-cup.json/master/2026/worldcup.json",
   "https://rawcdn.githack.com/openfootball/world-cup.json/master/2026/worldcup.json",
 ];
 
-// Normalize team names between openfootball and the base API
+// Normalize team names between sources and our PROFILE/team map
 const OFB_NAME = {
   "USA":                    "United States",
   "Bosnia & Herzegovina":   "Bosnia and Herzegovina",
@@ -24,7 +28,6 @@ function normName(n) { return OFB_NAME[n] || n; }
 
 async function fetchOFB() {
   const bust = `?t=${Date.now()}`;
-  // Race all mirrors; pick the response that has the most played matches
   const results = await Promise.allSettled(
     OFB_MIRRORS.map(url =>
       fetch(url + bust, {cache:"no-store"})
@@ -33,53 +36,75 @@ async function fetchOFB() {
         .catch(() => ({matches:[], raw:{matches:[]}}))
     )
   );
-  // Return the mirror with the most played matches
   return results
     .filter(r => r.status==="fulfilled")
     .map(r => r.value)
     .sort((a,b) => b.matches.length - a.matches.length)[0]?.raw || {matches:[]};
 }
 
+// Fetch worldcup26.ir live API and normalise into the same shape as rezarahiminia matches
+async function fetchWC26() {
+  const bust = `?t=${Date.now()}`;
+  try {
+    const data = await fetch(WC26_API + bust, {cache:"no-store"}).then(r => r.json());
+    // API returns array of match objects; field names mirror the rezarahiminia schema
+    return Array.isArray(data) ? data : (data.data || data.matches || data.games || []);
+  } catch { return []; }
+}
+
 async function loadAllData() {
   const bust = `?t=${Date.now()}`;
-  const [teams, matches, stadiums, tables, ofbRaw] = await Promise.all([
+  const [teams, matches, stadiums, tables, ofbRaw, wc26Games] = await Promise.all([
     fetch(RAW + "football.teams.json"      + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matches.json"    + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.stadiums.json"   + bust, {cache:"no-store"}).then(r => r.json()),
     fetch(RAW + "football.matchtables.json"+ bust, {cache:"no-store"}).then(r => r.json()),
     fetchOFB(),
+    fetchWC26(),
   ]);
 
-  // Build name→id lookup from teams
+  // Build fast lookups
   const nameToId = {};
   teams.forEach(t => { nameToId[t.name_en] = t.id; });
+  const matchIdx = {};
+  matches.forEach((m, i) => { matchIdx[`${m.home_team_id}_${m.away_team_id}`] = i; });
 
-  // Merge openfootball real scores into matches array
-  const ofbPlayed = (ofbRaw.matches||[]).filter(m => m.score?.ft);
-  if (ofbPlayed.length > 0) {
-    // Build a fast lookup: "homeId_awayId" → match index
-    const matchIdx = {};
-    matches.forEach((m, i) => { matchIdx[`${m.home_team_id}_${m.away_team_id}`] = i; });
-
-    ofbPlayed.forEach(om => {
-      const hName = normName(om.team1);
-      const aName = normName(om.team2);
-      const hId = nameToId[hName];
-      const aId = nameToId[aName];
-      if (!hId || !aId) return;
-      const key = `${hId}_${aId}`;
-      const idx = matchIdx[key];
-      if (idx == null) return;
-      matches[idx] = {
-        ...matches[idx],
-        finished:    "TRUE",
-        home_score:  String(om.score.ft[0]),
-        away_score:  String(om.score.ft[1]),
-        home_scorers: (om.goals1||[]).map(g=>`${g.name} ${g.minute}'`).join(", ") || "null",
-        away_scorers: (om.goals2||[]).map(g=>`${g.name} ${g.minute}'`).join(", ") || "null",
-      };
-    });
+  // Helper: apply a real result into the matches array by home/away team ID
+  function applyResult(hId, aId, hScore, aScore, scorers1="null", scorers2="null") {
+    const key = `${hId}_${aId}`;
+    const idx = matchIdx[key];
+    if (idx == null) return;
+    matches[idx] = {
+      ...matches[idx],
+      finished:     "TRUE",
+      home_score:   String(hScore),
+      away_score:   String(aScore),
+      home_scorers: scorers1||"null",
+      away_scorers: scorers2||"null",
+    };
   }
+
+  // 1. Merge worldcup26.ir live results (same schema as rezarahiminia, most up-to-date)
+  wc26Games.filter(m => m.finished==="TRUE" || m.finished===true).forEach(m => {
+    applyResult(m.home_team_id, m.away_team_id, m.home_score, m.away_score,
+      m.home_scorers, m.away_scorers);
+  });
+
+  // 2. Also merge openfootball (fallback for any gaps worldcup26.ir may have)
+  const ofbPlayed = (ofbRaw.matches||[]).filter(m => m.score?.ft);
+  ofbPlayed.forEach(om => {
+    const hId = nameToId[normName(om.team1)];
+    const aId = nameToId[normName(om.team2)];
+    if (!hId || !aId) return;
+    // Only apply if worldcup26.ir hasn't already marked it finished
+    const cur = matches[matchIdx[`${hId}_${aId}`]];
+    if (cur?.finished==="TRUE") return;
+    applyResult(hId, aId,
+      om.score.ft[0], om.score.ft[1],
+      (om.goals1||[]).map(g=>`${g.name} ${g.minute}'`).join(", ")||"null",
+      (om.goals2||[]).map(g=>`${g.name} ${g.minute}'`).join(", ")||"null",
+    );
+  });
 
   return { teams, matches, stadiums, tables };
 }
