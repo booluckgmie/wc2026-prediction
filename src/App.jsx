@@ -13,27 +13,21 @@ const OFB_URL = "https://raw.githubusercontent.com/openfootball/world-cup.json/m
 // ESPN unofficial soccer API — no API key, updates in near real-time, works from browser
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard";
 
-// Unified name normalisation for all three external sources
+// Unified name normalisation — maps external source spellings → rezarahiminia internal name_en
 const NAME_MAP = {
-  // openfootball
+  // openfootball / ESPN short names
   "USA":                                  "United States",
   "Bosnia & Herzegovina":                 "Bosnia and Herzegovina",
   "DR Congo":                             "Democratic Republic of the Congo",
   "Czechia":                              "Czech Republic",
   "Ivory Coast":                          "Ivory Coast",
   "Côte d'Ivoire":                        "Ivory Coast",
-  // various sources use different Turkey spellings
-  "Turkey":                               "Turkiye",
-  "Türkiye":                              "Turkiye",
-  // ESPN / worldcup26.ir extras
-  "Democratic Republic of the Congo":     "Democratic Republic of the Congo",
-  "Czech Republic":                       "Czech Republic",
-  "Bosnia and Herzegovina":               "Bosnia and Herzegovina",
-  "United States":                        "United States",
-  // ESPN sometimes appends "Men's" or uses short names
-  "South Korea":                          "South Korea",
+  // ESPN uses "Türkiye"; rezarahiminia stores "Turkey" — normalise to the internal name
+  "Türkiye":                              "Turkey",
+  // ESPN sometimes uses "Korea Republic"
   "Korea Republic":                       "South Korea",
-  "Republic of Ireland":                  "Republic of Ireland",
+  // worldcup26.ir may return "Turkiye" (without umlaut)
+  "Turkiye":                              "Turkey",
 };
 function normName(n) { return NAME_MAP[n?.trim()] || n?.trim() || ""; }
 
