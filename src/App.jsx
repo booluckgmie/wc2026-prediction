@@ -13,21 +13,20 @@ const OFB_URL = "https://raw.githubusercontent.com/openfootball/world-cup.json/m
 // ESPN unofficial soccer API — no API key, updates in near real-time, works from browser
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard";
 
-// Unified name normalisation — maps external source spellings → rezarahiminia internal name_en
+// Unified name normalisation — maps external source spellings → rezarahimiani internal name_en
+// rezarahimiani name_en is the canonical key; all sources must resolve to it.
 const NAME_MAP = {
-  // openfootball / ESPN short names
+  // openfootball short names
   "USA":                                  "United States",
   "Bosnia & Herzegovina":                 "Bosnia and Herzegovina",
   "DR Congo":                             "Democratic Republic of the Congo",
   "Czechia":                              "Czech Republic",
-  "Ivory Coast":                          "Ivory Coast",
-  "Côte d'Ivoire":                        "Ivory Coast",
-  // ESPN uses "Türkiye"; rezarahiminia stores "Turkey" — normalise to the internal name
-  "Türkiye":                              "Turkey",
-  // ESPN sometimes uses "Korea Republic"
+  // ESPN / other unicode variants
+  "Türkiye":                              "Turkey",   // ESPN uses ü
+  "Turkiye":                              "Turkey",   // worldcup26.ir without umlaut
   "Korea Republic":                       "South Korea",
-  // worldcup26.ir may return "Turkiye" (without umlaut)
-  "Turkiye":                              "Turkey",
+  "Côte d'Ivoire":                        "Ivory Coast",
+  "Ivory Coast":                          "Ivory Coast",
 };
 function normName(n) { return NAME_MAP[n?.trim()] || n?.trim() || ""; }
 
@@ -512,7 +511,7 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
             </div>
           </div>
           {/* Scorers */}
-          {done&&(game.home_scorers||game.away_scorers)&&game.home_scorers!=="null"&&(
+          {done&&(game.home_scorers!=="null"||game.away_scorers!=="null")&&(
             <div style={{display:"flex",justifyContent:"space-between",marginTop:10,fontSize:10,color:C.dim,gap:8}}>
               <div style={{flex:1,textAlign:"right"}}>{game.home_scorers!=="null"?game.home_scorers:""}</div>
               <div style={{fontSize:9,color:C.muted}}>⚽</div>
