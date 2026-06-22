@@ -148,6 +148,9 @@ async function loadAllData() {
     );
   });
 
+  // Recalibrate xG ratings from actual results — runs every fetch automatically
+  LIVE_PROFILE = computeDynamicProfiles(matches, teams);
+
   const sourcesActive = [
     espnGames.length > 0 ? "ESPN" : null,
     wc26Games.length > 0 ? "WC26" : null,
@@ -210,6 +213,43 @@ const PROFILE = {
   "Cape Verde":    {xgOff:1.3,xgDef:1.1,style:"Counter",          col:"#003893",r:{k:76,q:74,ro:74,b:73,kn:74,p:76},pl:["Tavares ★3.9","Andrade ★3.7","Carvalho ★3.6","Mendes ★3.7"]},
 };
 
+// Live-calibrated profiles — updated automatically each data fetch via Bayesian blend.
+// Formula: newXg = (actual_per_game × games + baseline × PRIOR) / (games + PRIOR)
+// PRIOR=2 means 2 "virtual" baseline games; confident after 3+ real games.
+const PRIOR = 2;
+let LIVE_PROFILE = PROFILE; // starts identical, overwritten after each fetch
+
+function computeDynamicProfiles(finishedMatches, teams) {
+  const idToName = {};
+  teams.forEach(t => { idToName[t.id] = t.name_en; });
+
+  const stats = {};
+  finishedMatches.filter(m => m.finished === "TRUE").forEach(m => {
+    const hn = idToName[m.home_team_id];
+    const an = idToName[m.away_team_id];
+    if (!hn || !an || m.home_score == null) return;
+    const hg = +m.home_score, ag = +m.away_score;
+    if (!stats[hn]) stats[hn] = {scored: 0, conceded: 0, games: 0};
+    if (!stats[an]) stats[an] = {scored: 0, conceded: 0, games: 0};
+    stats[hn].scored += hg; stats[hn].conceded += ag; stats[hn].games++;
+    stats[an].scored += ag; stats[an].conceded += hg; stats[an].games++;
+  });
+
+  const dynP = {...PROFILE};
+  Object.entries(stats).forEach(([name, {scored, conceded, games}]) => {
+    if (!games) return;
+    const pKey = profileName(name);
+    const base = PROFILE[pKey];
+    if (!base) return;
+    dynP[pKey] = {
+      ...base,
+      xgOff: +((scored   + PRIOR * base.xgOff) / (games + PRIOR)).toFixed(1),
+      xgDef: +((conceded + PRIOR * base.xgDef) / (games + PRIOR)).toFixed(1),
+    };
+  });
+  return dynP;
+}
+
 const CONF = {
   "Mexico":"CONCACAF","South Africa":"CAF","South Korea":"AFC","Czech Republic":"UEFA",
   "Canada":"CONCACAF","Switzerland":"UEFA","Qatar":"AFC","Bosnia and Herzegovina":"UEFA",
@@ -263,7 +303,7 @@ const TEAM_ALIAS = {
 function profileName(n) { return TEAM_ALIAS[n] || n; }
 
 function calcMatch(hn, an, refC="UEFA", cap=70000, scenario="base") {
-  const h=PROFILE[profileName(hn)], a=PROFILE[profileName(an)];
+  const h=LIVE_PROFILE[profileName(hn)], a=LIVE_PROFILE[profileName(an)];
   if (!h||!a) return null;
   const sc = SCENARIOS[scenario] || SCENARIOS.base;
   const capB = cap>80000?1.03:1.0;
