@@ -96,7 +96,7 @@ async function loadAllData() {
   matches.forEach((m, i) => { matchIdx[`${m.home_team_id}_${m.away_team_id}`] = i; });
 
   // Helper: apply a real result into the matches array by home/away team ID
-  function applyResult(hId, aId, hScore, aScore, scorers1="null", scorers2="null") {
+  function applyResult(hId, aId, hScore, aScore, scorers1="null", scorers2="null", penH=null, penA=null) {
     const key = `${hId}_${aId}`;
     const idx = matchIdx[key];
     if (idx == null) return false;
@@ -107,6 +107,8 @@ async function loadAllData() {
       away_score:   String(aScore),
       home_scorers: scorers1||"null",
       away_scorers: scorers2||"null",
+      pen_home:     penH != null ? String(penH) : null,
+      pen_away:     penA != null ? String(penA) : null,
     };
     return true;
   }
@@ -125,10 +127,11 @@ async function loadAllData() {
     if (!hId || !aId) return;
     const cur = matches[matchIdx[`${hId}_${aId}`]];
     if (cur?.finished==="TRUE") return;
-    applyResult(hId, aId, m.home_score, m.away_score, m.home_scorers, m.away_scorers);
+    applyResult(hId, aId, m.home_score, m.away_score, m.home_scorers, m.away_scorers,
+      m.pen_home ?? null, m.pen_away ?? null);
   });
 
-  // 3. openfootball — community-maintained, most reliable fallback
+  // 3. openfootball — community-maintained, includes score.pen for knockout shootouts
   const ofbPlayed = (ofbRaw.matches||[]).filter(m => m.score?.ft);
   ofbPlayed.forEach(om => {
     const hId = nameToId[normName(om.team1)];
@@ -140,6 +143,8 @@ async function loadAllData() {
       om.score.ft[0], om.score.ft[1],
       (om.goals1||[]).map(g=>`${g.name} ${g.minute}'`).join(", ")||"null",
       (om.goals2||[]).map(g=>`${g.name} ${g.minute}'`).join(", ")||"null",
+      om.score.pen?.[0] ?? null,
+      om.score.pen?.[1] ?? null,
     );
   });
 
@@ -1156,7 +1161,18 @@ function runTournamentSim(matches, tMap, sMap, tables, scenario) {
       let hg=0,ag=0,winner_id,pens=false,real=false;
       if (m.finished==="TRUE") {
         hg=+m.home_score; ag=+m.away_score; real=true;
-        winner_id = hg>ag?hid:ag>hg?aid:hid;
+        if (hg > ag) { winner_id = hid; }
+        else if (ag > hg) { winner_id = aid; }
+        else {
+          // Draw — went to penalties. Use real pen score if available, else Poisson probability.
+          pens = true;
+          if (m.pen_home != null && m.pen_away != null) {
+            winner_id = +m.pen_home > +m.pen_away ? hid : aid;
+          } else {
+            const res = (hid&&aid) ? calcMatch(hn,an,"UEFA",sMap[m.stadium_id]?.capacity,scenario) : null;
+            winner_id = res ? (res.W >= res.L ? hid : aid) : hid;
+          }
+        }
       } else {
         const res=(hid&&aid)?calcMatch(hn,an,"UEFA",sMap[m.stadium_id]?.capacity,scenario):null;
         if (res) {
@@ -1169,7 +1185,8 @@ function runTournamentSim(matches, tMap, sMap, tables, scenario) {
       matchWinners[String(m.id)]=winner_id;
       matchWinners[`L${String(m.id)}`]=winner_id===hid?aid:hid;
       const wt=tMap[winner_id];
-      return {id:m.id,hn,an,hid,aid,hg,ag,winner_id,winner:wt?.name_en||hn,winnerFlag:wt?.flag,pens,real};
+      const penScore = (pens && m.pen_home != null) ? `${m.pen_home}–${m.pen_away}` : null;
+      return {id:m.id,hn,an,hid,aid,hg,ag,winner_id,winner:wt?.name_en||hn,winnerFlag:wt?.flag,pens,penScore,real};
     });
   });
 
@@ -1201,7 +1218,7 @@ function MatchPill({r,tMap}) {
         </div>
         <div style={{textAlign:"center",flexShrink:0,minWidth:32}}>
           <div style={{fontSize:14,fontWeight:900,color:"#fff",lineHeight:1}}>{r.hg}–{r.ag}</div>
-          {r.pens&&<div style={{fontSize:7,color:C.amber,fontWeight:600}}>pens</div>}
+          {r.pens&&<div style={{fontSize:7,color:C.amber,fontWeight:600}}>{r.penScore?`pens ${r.penScore}`:"pens"}</div>}
           {r.real&&<div style={{fontSize:7,color:C.green,fontWeight:600}}>FT</div>}
         </div>
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-start",gap:5,minWidth:0}}>
@@ -1591,7 +1608,7 @@ export default function App() {
   useEffect(()=>{
     fetchData();
     // Re-fetch every 3 min to pick up live API updates on match day
-    const id = setInterval(()=>fetchData(true), 60*1000); // every 1 min — picks up openfootball updates faster
+    const id = setInterval(()=>fetchData(true), 30*1000); // every 30s — faster live result pickup
     return()=>clearInterval(id);
   },[]);
 
