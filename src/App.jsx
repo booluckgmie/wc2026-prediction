@@ -823,22 +823,21 @@ function GroupsTab({tables,matches,tMap,sMap,mob,scenario="base"}) {
   return (
     <div style={{display:"grid",gridTemplateColumns:mob?"1fr 1fr":"repeat(3,1fr)",gap:10}}>
       {groups.map(([grpKey, simTeams])=>{
-        // Check if API has real standings for this group
-        const apiGroup = apiMap[grpKey]||{};
-        const apiHasData = Object.values(apiGroup).some(t=>t.pts>0||t.mp>0);
-        const displayTeams = apiHasData
-          ? Object.values(apiGroup).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf)
-          : simTeams;
+        // Prefer computed standings (from merged OFB+ESPN+WC26 match data) when we have results.
+        // Fall back to API table only when we have zero live match results for this group.
         const grpMatches = matches.filter(m=>m.type==="group"&&m.group===grpKey);
         const played = grpMatches.filter(m=>m.finished==="TRUE").length;
         const total  = grpMatches.length;
+        // simTeams already computed from live data in simGroupStage — always use it
+        const displayTeams = simTeams;
+        const hasLive = played > 0;
 
         return (
         <div key={grpKey} style={{background:C.card,borderRadius:8,padding:mob?10:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <span style={{fontWeight:700,fontSize:14,color:"#93c5fd"}}>Group {grpKey}</span>
-            <span style={{fontSize:8,color:apiHasData?C.green:C.blue}}>
-              {apiHasData?`${played}/${total} played`:"Simulated"}
+            <span style={{fontSize:8,color:hasLive?C.green:C.blue}}>
+              {hasLive?`${played}/${total} played`:"Simulated"}
             </span>
           </div>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
@@ -1075,27 +1074,24 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
     });
   });
 
-  // 2. Determine per-group whether the official API table has real data
-  const apiHasData = {};
-  tables.forEach(g => {
-    apiHasData[g.group] = g.teams.some(t => t.pts > 0 || t.mp > 0);
+  // 2. Count finished matches per group in our merged data (OFB + ESPN + WC26).
+  //    When all 6 group matches are finished here, we have the most accurate data.
+  const finishedPerGroup = {};
+  const totalPerGroup = {};
+  matches.filter(m => m.type === "group" && m.group).forEach(m => {
+    totalPerGroup[m.group] = (totalPerGroup[m.group] || 0) + 1;
+    if (m.finished === "TRUE" && m.home_score != null && m.away_score != null)
+      finishedPerGroup[m.group] = (finishedPerGroup[m.group] || 0) + 1;
   });
 
-  // 3a. If official API has data for a group, use it directly
-  tables.forEach(g => {
-    if (apiHasData[g.group]) {
-      if (!st[g.group]) st[g.group] = {};
-      g.teams.forEach(t => { st[g.group][t.team_id] = {...t}; });
-    }
+  // A group is "live-complete" if all its matches have real results in our merged data
+  const liveComplete = {};
+  Object.keys(totalPerGroup).forEach(g => {
+    liveComplete[g] = (finishedPerGroup[g] || 0) >= totalPerGroup[g];
   });
 
-  // 3b. For groups where API is stale (all zeros), apply real finished match
-  //     scores from the matches array (which has openfootball results merged in).
-  //     Check allZero ONCE per group before the loop so multiple matches in the
-  //     same group all get applied (fixes the previous per-match check bug).
-  const staleGroups = new Set(
-    Object.keys(st).filter(g => !apiHasData[g])
-  );
+  // 3a. Build standings from the merged match data for every group that has
+  //     at least one finished match — this is always the freshest source.
   const upd = (grp, tid, gf, ga) => {
     const e = st[grp]?.[tid]; if (!e) return;
     e.mp++; e.gf+=gf; e.ga+=ga; e.gd=e.gf-e.ga;
@@ -1103,11 +1099,25 @@ function simGroupStage(matches, tMap, sMap, tables, scenario) {
   };
   matches.filter(m =>
     m.type==="group" && m.finished==="TRUE" &&
-    m.home_score!=null && m.away_score!=null &&
-    staleGroups.has(m.group)
+    m.home_score!=null && m.away_score!=null
   ).forEach(m => {
     upd(m.group, m.home_team_id, +m.home_score, +m.away_score);
     upd(m.group, m.away_team_id, +m.away_score, +m.home_score);
+  });
+
+  // 3b. For groups with NO live data at all, fall back to API table
+  //     (handles the case where OFB hasn't updated yet for that group).
+  const apiHasData = {};
+  tables.forEach(g => {
+    apiHasData[g.group] = g.teams.some(t => t.pts > 0 || t.mp > 0);
+  });
+  const noLiveData = new Set(
+    Object.keys(st).filter(g => !finishedPerGroup[g] && apiHasData[g])
+  );
+  tables.forEach(g => {
+    if (!noLiveData.has(g.group)) return;
+    if (!st[g.group]) st[g.group] = {};
+    g.teams.forEach(t => { st[g.group][t.team_id] = {...t}; });
   });
 
   // 4. Simulate every unplayed match to complete the standings
