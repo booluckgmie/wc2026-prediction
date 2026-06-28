@@ -609,12 +609,25 @@ function MatchDetail({game,tMap,sMap,onClose,mob,scenario="base"}) {
 
 // ── FIXTURES TAB ─────────────────────────────────────────────────────────────
 
-function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
+function FixturesTab({matches,tMap,sMap,tables,mob,scenario="base"}) {
   const [sel,setSel]=useState(null);
   const [stage,setStage]=useState("group");
   const [grp,setGrp]=useState("ALL");
   const [teamQ,setTeamQ]=useState("");
   const [teamFilter,setTeamFilter]=useState(null); // {id, name_en, flag}
+
+  // Build a map from match id → {hid, aid} by running the tournament simulation.
+  // This resolves knockout labels like "Winner Group E" into real team IDs.
+  const resolvedTeams = useMemo(() => {
+    if (!tables) return {};
+    const sim = runTournamentSim(matches, tMap, sMap, tables, scenario);
+    if (!sim) return {};
+    const map = {};
+    Object.values(sim.roundResults).flat().forEach(r => {
+      map[String(r.id)] = {hid: r.hid, aid: r.aid};
+    });
+    return map;
+  }, [matches, tMap, sMap, tables, scenario]);
 
   const stages=[{id:"group",l:"Group"},{id:"r32",l:"R32"},{id:"r16",l:"R16"},{id:"qf",l:"QF"},{id:"sf",l:"SF"},{id:"third",l:"3rd"},{id:"final",l:"Final"}];
 
@@ -636,9 +649,12 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
   }
 
   const shown=useMemo(()=>matches.filter(g=>{
-    // Team filter overrides stage/group
+    // Team filter overrides stage/group — also check resolved IDs for knockout rounds
     if(teamFilter) {
-      return g.home_team_id===teamFilter.id || g.away_team_id===teamFilter.id;
+      const r = resolvedTeams[String(g.id)] || {};
+      const hid = (g.home_team_id && g.home_team_id!=="0") ? g.home_team_id : r.hid;
+      const aid = (g.away_team_id && g.away_team_id!=="0") ? g.away_team_id : r.aid;
+      return hid===teamFilter.id || aid===teamFilter.id;
     }
     if(g.type!==stage) return false;
     if(stage==="group"&&grp!=="ALL"&&g.group!==grp) return false;
@@ -729,15 +745,18 @@ function FixturesTab({matches,tMap,sMap,mob,scenario="base"}) {
       ):(
         <div style={{display:"flex",flexDirection:"column",gap:6}}>
           {shown.map(g=>{
-            const home=tMap[g.home_team_id], away=tMap[g.away_team_id];
+            const resolved = resolvedTeams[String(g.id)] || {};
+            const homeId = (g.home_team_id && g.home_team_id!=="0") ? g.home_team_id : resolved.hid;
+            const awayId = (g.away_team_id && g.away_team_id!=="0") ? g.away_team_id : resolved.aid;
+            const home=tMap[homeId], away=tMap[awayId];
             const hn=home?.name_en||g.home_team_label||"TBD";
             const an=away?.name_en||g.away_team_label||"TBD";
             const done=g.finished==="TRUE";
             const live=g.time_elapsed&&g.time_elapsed!=="notstarted"&&!done;
             const res=!live?calcMatch(hn,an,"UEFA",sMap[g.stadium_id]?.capacity,scenario):null;
 
-            const isHome=teamFilter&&g.home_team_id===teamFilter.id;
-            const isAway=teamFilter&&g.away_team_id===teamFilter.id;
+            const isHome=teamFilter&&homeId===teamFilter.id;
+            const isAway=teamFilter&&awayId===teamFilter.id;
             return (
               <div key={g.id} onClick={()=>setSel(g)}
                 style={{background:C.card,borderRadius:8,padding:mob?"9px 10px":"10px 14px",cursor:"pointer",
@@ -1751,7 +1770,7 @@ export default function App() {
       {/* Content */}
       {!loading&&(
         <main style={{flex:1,overflowY:"auto",padding:mob?"10px":"14px 20px",paddingBottom:`calc(16px + env(safe-area-inset-bottom,0px))`}}>
-          {tab==="fixtures"  &&<FixturesTab   matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
+          {tab==="fixtures"  &&<FixturesTab   matches={matches} tMap={tMap} sMap={sMap} tables={tables} mob={mob} scenario={scenario}/>}
           {tab==="groups"    &&<GroupsTab     tables={tables} matches={matches} tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
           {tab==="teams"     &&<TeamsTab      tMap={tMap} mob={mob}/>}
           {tab==="simulate"  &&<SimulateTab   tMap={tMap} sMap={sMap} mob={mob} scenario={scenario}/>}
